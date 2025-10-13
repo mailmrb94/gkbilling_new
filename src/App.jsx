@@ -198,42 +198,88 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
 
   const y1 = doc.lastAutoTable?.finalY || startY+100;
   const amountInWords = numberToIndianCurrencyWords(totals.net);
-  const summaryRows=[
-    [
-      { content:"Total Quantity", styles:{ fontStyle:"bold", textColor:[30,41,59] } },
-      { content:formatQuantity(totals.qty ?? 0), styles:{ halign:"center", fontStyle:"bold", textColor:[30,41,59] } }
-    ],
-    [
-      { content:"Taxable Amount", styles:{ fontStyle:"bold", textColor:[30,41,59] } },
-      { content:formatINR(totals.taxable), styles:{ halign:"right", fontStyle:"bold", textColor:[15,23,42] } }
-    ]
+  const summaryEntries=[
+    {
+      label:"Total Quantity",
+      value:formatQuantity(totals.qty ?? 0),
+      align:"center",
+      fill:[241,245,249],
+      valueColor:[30,41,59]
+    },
+    {
+      label:"Taxable Amount",
+      value:formatINR(totals.taxable),
+      align:"right",
+      fill:[241,245,249],
+      valueColor:[15,23,42]
+    }
   ];
   if(includeDiscount){
-    summaryRows.push([
-      { content:"Total Discount", styles:{ fontStyle:"bold", textColor:[30,41,59] } },
-      { content:formatINR(totals.discount), styles:{ halign:"right", fontStyle:"bold", textColor:[15,23,42] } }
-    ]);
+    summaryEntries.push({
+      label:"Total Discount",
+      value:formatINR(totals.discount),
+      align:"right",
+      fill:[241,245,249],
+      valueColor:[15,23,42]
+    });
   }
-  summaryRows.push(
-    [
-      { content:"Total Tax", styles:{ fontStyle:"bold", textColor:[30,41,59] } },
-      { content:formatINR(totals.tax), styles:{ halign:"right", fontStyle:"bold", textColor:[15,23,42] } }
-    ],
-    [
-      { content:"Grand Total", styles:{ fontStyle:"bold", textColor:[15,23,42], fillColor:[226,232,240] } },
-      { content:formatINR(totals.net), styles:{ halign:"right", fontStyle:"bold", textColor:[14,165,233], fillColor:[226,232,240] } }
-    ]
+  summaryEntries.push(
+    {
+      label:"Total Tax",
+      value:formatINR(totals.tax),
+      align:"right",
+      fill:[241,245,249],
+      valueColor:[15,23,42]
+    },
+    {
+      label:"Grand Total",
+      value:formatINR(totals.net),
+      align:"right",
+      fill:[224,242,254],
+      valueColor:[14,165,233]
+    }
   );
+  const summaryY = y1 + 18;
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(12);
+  doc.text("Summary", 40, summaryY);
+  const summaryLabelRow = summaryEntries.map(entry=>({
+    content:entry.label,
+    styles:{
+      halign:"center",
+      fontStyle:"bold",
+      fontSize:9,
+      textColor:[71,85,105],
+      fillColor:[226,232,240],
+      cellPadding:{ top:6, bottom:6, left:8, right:8 }
+    }
+  }));
+  const summaryValueRow = summaryEntries.map(entry=>({
+    content:entry.value,
+    styles:{
+      halign:entry.align||"center",
+      fontStyle:"bold",
+      fontSize:12,
+      textColor:entry.valueColor,
+      fillColor:entry.fill,
+      cellPadding:{ top:12, bottom:12, left:12, right:12 },
+      lineColor:[148,163,184],
+      lineWidth:0.4
+    }
+  }));
   autoTable(doc,{
-    startY:y1+12,
-    theme:"grid",
+    startY:summaryY+6,
+    theme:"plain",
     margin:{ left:40, right:40 },
-    styles:{ fontSize:11, cellPadding:{ top:8, bottom:8, left:12, right:12 }, lineWidth:0.4, lineColor:[148,163,184] },
-    head:[["Summary","Amount"]],
-    headStyles:{ fillColor:[30,41,59], textColor:255, halign:"center" },
-    body:summaryRows,
-    columnStyles:{0:{cellWidth:(pageWidth-80)*0.55,halign:"left"},1:{cellWidth:(pageWidth-80)*0.45,halign:"right"}}
+    styles:{ lineColor:[148,163,184], lineWidth:0.4 },
+    body:[summaryLabelRow, summaryValueRow],
+    columnStyles:summaryEntries.reduce((acc,_,idx)=>{
+      acc[idx]={ cellWidth:(pageWidth-80)/summaryEntries.length, halign:"center" };
+      return acc;
+    },{})
   });
+  doc.setFont("helvetica","normal");
+  doc.setFontSize(10);
   autoTable(doc,{
     startY:(doc.lastAutoTable?.finalY||y1+60)+6,
     theme:"grid",
