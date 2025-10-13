@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 import JSZip from "jszip";
 import * as FileSaver from "file-saver";
@@ -7,6 +7,30 @@ import autoTable from "jspdf-autotable";
 import dayjs from "dayjs";
 
 const saveAs = FileSaver.saveAs || FileSaver.default;
+
+function usePersistentState(key, defaultValue) {
+  const getDefault = () =>
+    typeof defaultValue === "function" ? defaultValue() : defaultValue;
+  const [value, setValue] = useState(() => {
+    if (typeof window === "undefined") return getDefault();
+    const stored = window.localStorage.getItem(key);
+    if (stored === null) return getDefault();
+    try {
+      return JSON.parse(stored);
+    } catch {
+      return getDefault();
+    }
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      /* ignore storage errors */
+    }
+  }, [key, value]);
+  return [value, setValue];
+}
 
 // Currency without rupee glyph to avoid jsPDF helvetica fallback rendering '1'
 function formatINR(n){ const num = Number(n||0); return "Rs " + new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(num); }
@@ -84,14 +108,14 @@ function renderInvoicePdf({ meta, items, totals, brand }) {
 }
 
 export default function App(){
-  const [tab, setTab] = useState("customers"); // customers | books | invoice
-  const [catalog,setCatalog]=useState([]);
-  const [customers,setCustomers]=useState([]);
-  const [batchItems,setBatchItems]=useState([]);
-  const [lines,setLines]=useState([]);
-  const [defaultTaxPct,setDefaultTaxPct]=useState(18);
-  const [filter,setFilter]=useState("");
-  const [selectedCustomer,setSelectedCustomer]=useState(null);
+  const [tab, setTab] = usePersistentState("ui.tab", "customers"); // customers | books | invoice
+  const [catalog,setCatalog]=usePersistentState("data.catalog", []);
+  const [customers,setCustomers]=usePersistentState("data.customers", []);
+  const [batchItems,setBatchItems]=usePersistentState("data.batchItems", []);
+  const [lines,setLines]=usePersistentState("data.lines", []);
+  const [defaultTaxPct,setDefaultTaxPct]=usePersistentState("settings.defaultTaxPct", 18);
+  const [filter,setFilter]=usePersistentState("ui.filter", "");
+  const [selectedCustomer,setSelectedCustomer]=usePersistentState("ui.selectedCustomer", null);
 
   const filteredBooks = useMemo(()=>{ const q=filter.trim().toLowerCase(); if(!q) return catalog; return catalog.filter(b=>[b.sku,b.title,b.author,b.publisher].filter(Boolean).some(f=>String(f).toLowerCase().includes(q))); },[filter,catalog]);
 
