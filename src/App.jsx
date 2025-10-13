@@ -5,6 +5,8 @@ import * as FileSaver from "file-saver";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import dayjs from "dayjs";
+import { useSupabaseSync } from "./useSupabaseSync";
+import { persistInvoiceRecord } from "./supabasePersistence";
 
 const saveAs = FileSaver.saveAs || FileSaver.default;
 
@@ -136,6 +138,269 @@ function numberToIndianCurrencyWords(amount){
   return `${phrase} Only`;
 }
 function asNumber(v, f = 0) { const n = Number(v); return Number.isFinite(n) ? n : f; }
+
+function randomId(prefix = "id"){
+  if(typeof crypto !== "undefined" && crypto.randomUUID){
+    return `${prefix}_${crypto.randomUUID()}`;
+  }
+  return `${prefix}_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+}
+
+function slugifyKey(value){
+  if(value === null || value === undefined) return null;
+  const text = String(value).trim().toLowerCase();
+  if(!text) return null;
+  return text.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function buildBookUid({ sku, title, uid }){
+  if(uid) return uid;
+  const skuSlug = slugifyKey(sku);
+  if(skuSlug) return `book_${skuSlug}`;
+  const titleSlug = slugifyKey(title);
+  if(titleSlug) return `book_${titleSlug}`;
+  return randomId("book");
+}
+
+function normalizeBook(input = {}){
+  const sku = input.sku ?? input.SKU ?? "";
+  const title = input.title ?? input.Title ?? input.book_title ?? "";
+  const author = input.author ?? input.Author ?? "";
+  const publisher = input.publisher ?? input.Publisher ?? "";
+  const mrp = asNumber(input.mrp ?? input.MRP ?? input.price ?? 0, 0);
+  const defaultDiscount = asNumber(
+    input.default_discount_pct ?? input.discount ?? input.default_discount ?? 0,
+    0
+  );
+  const defaultTax = asNumber(
+    input.default_tax_pct ?? input.tax ?? input.gst ?? input.default_tax ?? 0,
+    0
+  );
+  const record = {
+    uid: buildBookUid({ sku, title, uid: input.uid ?? input.id }),
+    sku: String(sku || "").trim(),
+    title: String(title || "").trim(),
+    author: String(author || "").trim(),
+    publisher: String(publisher || "").trim(),
+    mrp,
+    default_discount_pct: defaultDiscount,
+    default_tax_pct: defaultTax,
+  };
+  const createdAt = input.createdAt ?? input.created_at;
+  const updatedAt = input.updatedAt ?? input.updated_at ?? createdAt;
+  if(createdAt) record.createdAt = createdAt;
+  if(updatedAt) record.updatedAt = updatedAt;
+  return record;
+}
+
+function buildCustomerUid(invoiceNo, name, gstin, uid){
+  if(uid) return uid;
+  const invoiceSlug = slugifyKey(invoiceNo);
+  if(invoiceSlug) return `customer_${invoiceSlug}`;
+  const gstSlug = slugifyKey(gstin);
+  if(gstSlug) return `customer_${gstSlug}`;
+  const nameSlug = slugifyKey(name);
+  if(nameSlug) return `customer_${nameSlug}`;
+  return randomId("customer");
+}
+
+function normalizeCustomer(input = {}){
+  const invoiceNo = input.invoice_no ?? input.invoiceNo ?? input.InvoiceNo ?? "";
+  const customerName =
+    input.customer_name ??
+    input.customerName ??
+    input.CustomerName ??
+    input.customer ??
+    input.Customer ??
+    "";
+  const billingAddress =
+    input.billing_address ??
+    input.billingAddress ??
+    input.BillingAddress ??
+    input.billing ??
+    "";
+  const shippingAddress =
+    input.shipping_address ??
+    input.shippingAddress ??
+    input.ShippingAddress ??
+    input.shipping ??
+    billingAddress;
+  const gstin = input.gstin ?? input.GSTIN ?? input.gst ?? "";
+  const pan = input.pan ?? input.PAN ?? "";
+  const placeOfSupply =
+    input.place_of_supply ??
+    input.placeOfSupply ??
+    input.PlaceOfSupply ??
+    input.place ??
+    "";
+  const email = input.email ?? input.Email ?? "";
+  const phone = input.phone ?? input.Phone ?? input.contact ?? "";
+  const invoiceDate = input.invoice_date ?? input.invoiceDate ?? input.InvoiceDate ?? "";
+  const dueDate = input.due_date ?? input.dueDate ?? input.DueDate ?? "";
+  const notes = input.notes ?? input.Notes ?? "";
+  const record = {
+    uid: buildCustomerUid(invoiceNo, customerName, gstin, input.uid ?? input.id),
+    invoice_no: String(invoiceNo || "").trim(),
+    customer_name: String(customerName || "").trim(),
+    billing_address: String(billingAddress || "").trim(),
+    shipping_address: String(shippingAddress || "").trim(),
+    gstin: String(gstin || "").trim(),
+    pan: String(pan || "").trim(),
+    place_of_supply: String(placeOfSupply || "").trim(),
+    email: String(email || "").trim(),
+    phone: String(phone || "").trim(),
+    invoice_date: String(invoiceDate || "").trim(),
+    due_date: String(dueDate || "").trim(),
+    notes: String(notes || "").trim(),
+  };
+  if(input.meta) record.meta = input.meta;
+  const createdAt = input.createdAt ?? input.created_at;
+  const updatedAt = input.updatedAt ?? input.updated_at ?? createdAt;
+  if(createdAt) record.createdAt = createdAt;
+  if(updatedAt) record.updatedAt = updatedAt;
+  return record;
+}
+
+function normalizeDraft(input = {}){
+  const createdAt = input.createdAt ?? input.created_at ?? new Date().toISOString();
+  const updatedAt = input.updatedAt ?? input.updated_at ?? createdAt;
+  const lines = Array.isArray(input.lines)
+    ? input.lines.map((line) => ({ ...line }))
+    : [];
+  const metaSource = input.meta;
+  const meta = metaSource && typeof metaSource === "object" ? { ...metaSource } : {};
+  const prefsSource = input.pdfColumnPrefs ?? input.pdf_column_prefs;
+  const pdfColumnPrefs =
+    prefsSource && typeof prefsSource === "object" ? { ...prefsSource } : {};
+  return {
+    id: input.id ?? input.uid ?? randomId("draft"),
+    label: (input.label ?? input.name ?? "Draft").toString().trim() || "Draft",
+    meta,
+    lines,
+    pdfColumnPrefs,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function fromSupabaseBook(row){
+  return normalizeBook(row || {});
+}
+
+function toSupabaseBook(book){
+  const normalized = normalizeBook(book || {});
+  const row = {
+    uid: normalized.uid,
+    sku: normalized.sku || null,
+    title: normalized.title || null,
+    author: normalized.author || null,
+    publisher: normalized.publisher || null,
+    mrp: asNumber(normalized.mrp, 0),
+    default_discount_pct: asNumber(normalized.default_discount_pct, 0),
+    default_tax_pct: asNumber(normalized.default_tax_pct, 0),
+    updated_at: normalized.updatedAt || new Date().toISOString(),
+  };
+  if(normalized.createdAt) row.created_at = normalized.createdAt;
+  return row;
+}
+
+function fromSupabaseCustomer(row){
+  return normalizeCustomer(row || {});
+}
+
+function toSupabaseCustomer(customer){
+  const normalized = normalizeCustomer(customer || {});
+  const row = {
+    uid: normalized.uid,
+    invoice_no: normalized.invoice_no || null,
+    customer_name: normalized.customer_name || null,
+    billing_address: normalized.billing_address || null,
+    shipping_address: normalized.shipping_address || null,
+    gstin: normalized.gstin || null,
+    pan: normalized.pan || null,
+    place_of_supply: normalized.place_of_supply || null,
+    email: normalized.email || null,
+    phone: normalized.phone || null,
+    invoice_date: normalized.invoice_date || null,
+    due_date: normalized.due_date || null,
+    notes: normalized.notes || null,
+    updated_at: normalized.updatedAt || new Date().toISOString(),
+  };
+  if(normalized.meta) row.meta = normalized.meta;
+  if(normalized.createdAt) row.created_at = normalized.createdAt;
+  return row;
+}
+
+function fromSupabaseDraft(row){
+  return normalizeDraft({
+    id: row?.uid ?? row?.id,
+    label: row?.label,
+    meta: row?.meta,
+    lines: row?.lines,
+    pdfColumnPrefs: row?.pdf_column_prefs ?? row?.pdfColumnPrefs,
+    createdAt: row?.created_at,
+    updatedAt: row?.updated_at,
+  });
+}
+
+function toSupabaseDraft(draft){
+  const normalized = normalizeDraft(draft || {});
+  return {
+    uid: normalized.id,
+    label: normalized.label,
+    meta: normalized.meta,
+    lines: normalized.lines,
+    pdf_column_prefs: normalized.pdfColumnPrefs,
+    created_at: normalized.createdAt,
+    updated_at: normalized.updatedAt || new Date().toISOString(),
+  };
+}
+
+function SyncStatusPill({ status, fallback }){
+  const offlineStyle = { background: "rgba(253,230,138,0.45)", color: "#92400e" };
+  const loadingStyle = { background: "rgba(125,211,252,0.45)", color: "#0c4a6e" };
+  const syncingStyle = { background: "rgba(147,197,253,0.45)", color: "#1d4ed8" };
+  const successStyle = { background: "rgba(134,239,172,0.45)", color: "#166534" };
+  const errorStyle = { background: "rgba(248,113,113,0.45)", color: "#b91c1c" };
+
+  if(!status?.available){
+    return (
+      <span
+        className="pill"
+        style={offlineStyle}
+        title="Configure Supabase environment variables to enable cloud sync."
+      >
+        {fallback || "Cloud sync off"}
+      </span>
+    );
+  }
+  if(status.error){
+    return (
+      <span className="pill" style={errorStyle} title={status.error}>
+        Sync error
+      </span>
+    );
+  }
+  if(status.loading){
+    return (
+      <span className="pill" style={loadingStyle}>
+        Loading cloud…
+      </span>
+    );
+  }
+  if(status.syncing){
+    return (
+      <span className="pill" style={syncingStyle}>
+        Syncing…
+      </span>
+    );
+  }
+  return (
+    <span className="pill" style={successStyle}>
+      Cloud synced
+    </span>
+  );
+}
 
 function computeLine({ qty = 1, mrp = 0, rate, discountPct = 0, taxPct = 0 }) {
   const appliedRate = rate !== undefined && rate !== null && `${rate}` !== "" ? asNumber(rate) : asNumber(mrp);
@@ -319,6 +584,77 @@ export default function App(){
   const dragIndexRef = React.useRef(null);
 
   useEffect(()=>{
+    setCatalog(prev=>{
+      if(!Array.isArray(prev)) return [];
+      if(prev.every(item=>item && item.uid)) return prev;
+      return prev.map(normalizeBook);
+    });
+  },[setCatalog]);
+
+  useEffect(()=>{
+    setCustomers(prev=>{
+      if(!Array.isArray(prev)) return [];
+      if(prev.every(item=>item && item.uid)) return prev;
+      return prev.map(normalizeCustomer);
+    });
+  },[setCustomers]);
+
+  useEffect(()=>{
+    setSavedInvoices(prev=>{
+      if(!Array.isArray(prev)) return [];
+      if(prev.every(item=>item && item.id)) return prev;
+      return prev.map(normalizeDraft);
+    });
+  },[setSavedInvoices]);
+
+  useEffect(()=>{
+    if(!selectedCustomer) return;
+    if(selectedCustomer.uid) return;
+    setSelectedCustomer(normalizeCustomer(selectedCustomer));
+  },[selectedCustomer,setSelectedCustomer]);
+
+  useEffect(()=>{
+    if(!selectedCustomer) return;
+    const match=customers.find(c=>c.uid===selectedCustomer.uid);
+    if(match && match!==selectedCustomer){
+      setSelectedCustomer(match);
+    }
+  },[customers,selectedCustomer,setSelectedCustomer]);
+
+  const bookSyncStatus = useSupabaseSync({
+    table:"books",
+    state:catalog,
+    setState:setCatalog,
+    identity:(book)=>book?.uid || buildBookUid({ sku:book?.sku, title:book?.title }),
+    fromRow:fromSupabaseBook,
+    toRow:toSupabaseBook,
+    conflictTarget:"workspace_id,uid",
+    orderBy:{ column:"title", ascending:true }
+  });
+
+  const customerSyncStatus = useSupabaseSync({
+    table:"customers",
+    state:customers,
+    setState:setCustomers,
+    identity:(customer)=>customer?.uid || buildCustomerUid(customer?.invoice_no, customer?.customer_name, customer?.gstin),
+    fromRow:fromSupabaseCustomer,
+    toRow:toSupabaseCustomer,
+    conflictTarget:"workspace_id,uid",
+    orderBy:{ column:"invoice_no", ascending:true }
+  });
+
+  const draftSyncStatus = useSupabaseSync({
+    table:"draft_invoices",
+    state:savedInvoices,
+    setState:setSavedInvoices,
+    identity:(draft)=>draft?.id || draft?.uid,
+    fromRow:fromSupabaseDraft,
+    toRow:toSupabaseDraft,
+    conflictTarget:"workspace_id,uid",
+    orderBy:{ column:"updated_at", ascending:false }
+  });
+
+  useEffect(()=>{
     if(!isBookModalOpen) return;
     const handler=(event)=>{
       if(event.key==='Escape') setIsBookModalOpen(false);
@@ -434,16 +770,42 @@ export default function App(){
   };
   const resetPdfColumns = () => setPdfColumnPrefs({});
 
+  const cloudStatusLabel = useMemo(()=>{
+    const statuses=[bookSyncStatus,customerSyncStatus,draftSyncStatus];
+    if(!statuses.some(status=>status?.available)) return "Local-only";
+    if(statuses.some(status=>status?.error)) return "Sync error";
+    if(statuses.some(status=>status?.loading)) return "Connecting";
+    if(statuses.some(status=>status?.syncing)) return "Syncing";
+    return "Supabase";
+  },[bookSyncStatus,customerSyncStatus,draftSyncStatus]);
+
   const statEntries = useMemo(()=>[
     { label:"Customers Loaded", value: customers.length },
     { label:"Books Catalogued", value: catalog.length },
     { label:"Visible Books", value: filteredBooks.length },
     { label:"Invoice Lines", value: lines.length },
-    { label:"Current Invoice Net", value: formatINR(totals.net) }
-  ],[customers.length,catalog.length,filteredBooks.length,lines.length,totals.net]);
+    { label:"Current Invoice Net", value: formatINR(totals.net) },
+    { label:"Cloud Sync", value: cloudStatusLabel }
+  ],[customers.length,catalog.length,filteredBooks.length,lines.length,totals.net,cloudStatusLabel]);
 
-  async function onLoadCatalog(e){ const f=e.target.files?.[0]; if(!f) return; const rows=await parseCsv(f); const norm=rows.map(r=>({ sku:r.sku??r.SKU??"", title:r.title??r.Title??r.book_title??"", author:r.author??r.Author??"", publisher:r.publisher??r.Publisher??"", mrp:asNumber(r.mrp??r.MRP), default_discount_pct:asNumber(r.default_discount_pct??r.discount??0), default_tax_pct:asNumber(r.default_tax_pct??r.tax??r.gst??0) })); setCatalog(norm); }
-  async function onLoadCustomers(e){ const f=e.target.files?.[0]; if(!f) return; const rows=await parseCsv(f); setCustomers(rows); }
+  async function onLoadCatalog(e){
+    const file=e.target.files?.[0];
+    if(!file) return;
+    const rows=await parseCsv(file);
+    const normalized=rows
+      .map((row)=>normalizeBook(row))
+      .filter((entry)=>entry.title || entry.sku);
+    setCatalog(normalized);
+  }
+  async function onLoadCustomers(e){
+    const file=e.target.files?.[0];
+    if(!file) return;
+    const rows=await parseCsv(file);
+    const normalized=rows
+      .map((row)=>normalizeCustomer(row))
+      .filter((entry)=>entry.invoice_no || entry.customer_name);
+    setCustomers(normalized);
+  }
   async function onLoadItems(e){ const f=e.target.files?.[0]; if(!f) return; const rows=await parseCsv(f); setBatchItems(rows); }
 
   function pickCustomer(inv){ const c=customers.find(r=>String(r.invoice_no)===String(inv)); if(c) setSelectedCustomer(c); }
@@ -463,7 +825,20 @@ export default function App(){
     };
   }
 
-  function generateSingle(){ const meta=currentInvoiceMeta(); const doc=renderInvoicePdf({ meta, items:lines, totals, columnOptions:pdfColumnPrefs }); doc.save(`${meta.invoice_no||"invoice"}.pdf`); }
+  async function generateSingle(){
+    const meta=currentInvoiceMeta();
+    const doc=renderInvoicePdf({ meta, items:lines, totals, columnOptions:pdfColumnPrefs });
+    doc.save(`${meta.invoice_no||"invoice"}.pdf`);
+    await persistInvoiceRecord({
+      invoiceNo: meta.invoice_no,
+      customerName: meta.customer_name,
+      meta,
+      items: lines,
+      totals,
+      pdfColumnPrefs,
+      source: "single",
+    });
+  }
 
   function openAddBookModal(){
     setBookForm({ sku:"", title:"", author:"", publisher:"", mrp:"", default_discount_pct:"", default_tax_pct:"" });
@@ -472,21 +847,18 @@ export default function App(){
   }
 
   function upsertBook(book){
+    const normalized=normalizeBook(book);
     setCatalog(prev=>{
-      const next=[...prev];
-      const targetKey=(val)=>String(val||"").trim().toLowerCase();
-      const matchIndex=next.findIndex(existing=>{
-        if(book.sku && existing.sku){
-          return targetKey(existing.sku)===targetKey(book.sku);
-        }
-        return targetKey(existing.title)===targetKey(book.title);
-      });
-      if(matchIndex>=0){
-        next[matchIndex]={ ...next[matchIndex], ...book };
+      const existing=Array.isArray(prev)?prev.slice():[];
+      const mapped=existing.map(normalizeBook);
+      const idx=mapped.findIndex(item=>item.uid===normalized.uid);
+      if(idx>=0){
+        const current=mapped[idx];
+        mapped[idx]={ ...current, ...normalized, uid: current.uid };
       }else{
-        next.push(book);
+        mapped.push(normalized);
       }
-      return next;
+      return mapped;
     });
   }
 
@@ -515,28 +887,30 @@ export default function App(){
     const meta=currentInvoiceMeta();
     const label=(draftLabel||meta.invoice_no||"Draft").trim();
     const timestamp=new Date().toISOString();
+    const linesCopy=lines.map(l=>({ ...l }));
+    const pdfPrefsCopy={ ...pdfColumnPrefs };
+    const metaCopy={ ...meta };
     setSavedInvoices(prev=>{
-      const linesCopy=lines.map(l=>({ ...l }));
-      const payload={
-        label:label||"Draft",
+      const drafts=Array.isArray(prev)?prev.map(normalizeDraft):[];
+      const existingIndex=drafts.findIndex(d=>d.label.toLowerCase()===label.toLowerCase());
+      const createdAt=existingIndex>=0?drafts[existingIndex].createdAt:timestamp;
+      const identifier=existingIndex>=0?drafts[existingIndex].id:undefined;
+      const payload=normalizeDraft({
+        id:identifier,
+        label,
+        meta:metaCopy,
         lines:linesCopy,
-        meta:{ ...meta },
-        pdfColumnPrefs:{ ...pdfColumnPrefs },
-        createdAt:timestamp,
+        pdfColumnPrefs:pdfPrefsCopy,
+        createdAt,
         updatedAt:timestamp
-      };
-      const existingIndex=prev.findIndex(d=>d.label.toLowerCase()===payload.label.toLowerCase());
+      });
       if(existingIndex>=0){
-        const existing=prev[existingIndex];
-        const ensuredId=existing.id || existing.label || `draft-${Date.now()}`;
-        const updated={ ...existing, ...payload, id:ensuredId, createdAt:existing.createdAt||timestamp, updatedAt:timestamp };
-        const clone=[...prev];
-        clone[existingIndex]=updated;
-        return clone.sort((a,b)=>new Date(b.updatedAt).getTime()-new Date(a.updatedAt).getTime());
+        drafts[existingIndex]=payload;
+      }else{
+        drafts.push(payload);
       }
-      const id=`draft-${Date.now()}`;
-      const merged={ id, ...payload };
-      return [...prev, merged].sort((a,b)=>new Date(b.updatedAt).getTime()-new Date(a.updatedAt).getTime());
+      drafts.sort((a,b)=>new Date(b.updatedAt).getTime()-new Date(a.updatedAt).getTime());
+      return drafts;
     });
     setDraftLabel(label||"Draft");
   }
@@ -545,7 +919,7 @@ export default function App(){
     if(!draft) return;
     setLines(draft.lines?.map(l=>({ ...l }))||[]);
     setPdfColumnPrefs(draft.pdfColumnPrefs||{});
-    setSelectedCustomer(draft.meta||null);
+    setSelectedCustomer(draft.meta ? normalizeCustomer(draft.meta) : null);
     setDraftLabel(draft.label||"");
     setTab('invoice');
   }
@@ -579,6 +953,15 @@ export default function App(){
       const doc=renderInvoicePdf({ meta:cust, items:used, totals, columnOptions:pdfColumnPrefs });
       const blob=doc.output("blob");
       zip.file(`${invNo||"invoice"}.pdf`, blob);
+      await persistInvoiceRecord({
+        invoiceNo: cust.invoice_no,
+        customerName: cust.customer_name,
+        meta: cust,
+        items: used,
+        totals,
+        pdfColumnPrefs,
+        source: "batch",
+      });
     }
     const out=await zip.generateAsync({ type:"blob" });
     saveAs(out, `invoices_${dayjs().format("YYYYMMDD_HHmm")}.zip`);
@@ -615,7 +998,10 @@ export default function App(){
           <div>
             <div className="section-header">
               <h2>Customers CSV</h2>
-              <span className="pill">{customers.length ? `${customers.length} customers loaded` : 'Awaiting CSV upload'}</span>
+              <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+                <span className="pill">{customers.length ? `${customers.length} customers loaded` : 'Awaiting CSV upload'}</span>
+                <SyncStatusPill status={customerSyncStatus} fallback="Cloud sync off" />
+              </div>
             </div>
             <p style={{color:'#475569', marginTop:0}}>Load customers and then switch to Invoice tab to preview or batch-generate colourful PDFs.</p>
             <input type="file" accept=".csv" onChange={onLoadCustomers} />
@@ -635,7 +1021,10 @@ export default function App(){
           <div>
             <div className="section-header">
               <h2>Books Catalog</h2>
-              <span className="pill">{filteredBooks.length} matching titles</span>
+              <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+                <span className="pill">{filteredBooks.length} matching titles</span>
+                <SyncStatusPill status={bookSyncStatus} fallback="Cloud sync off" />
+              </div>
             </div>
             <input type="file" accept=".csv" onChange={onLoadCatalog} />
             <div style={{marginTop:8}}>
@@ -703,8 +1092,16 @@ export default function App(){
               </div>
             </div>
             <div style={{marginTop:24, padding:'16px', background:'#f1f5f9', borderRadius:12}}>
-              <h3 style={{marginTop:0, fontSize:16, color:'#0f172a'}}>Invoice Drafts</h3>
-              <p style={{color:'#475569', fontSize:12, marginTop:0}}>Save your current invoice so you can pause mid-way and resume later. Drafts live in your browser storage.</p>
+              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+                <h3 style={{marginTop:0, fontSize:16, color:'#0f172a'}}>Invoice Drafts</h3>
+                <SyncStatusPill status={draftSyncStatus} fallback="Cloud sync off" />
+              </div>
+              <p style={{color:'#475569', fontSize:12, marginTop:0}}>
+                Save your current invoice so you can pause mid-way and resume later.
+                {draftSyncStatus.available
+                  ? ' Drafts sync to your Supabase workspace whenever changes are saved.'
+                  : ' Drafts stay in your browser storage until Supabase sync is configured.'}
+              </p>
               <div style={{display:'flex', flexWrap:'wrap', gap:12}}>
                 <div style={{flex:'1 1 220px', minWidth:220}}>
                   <label style={{marginBottom:6}}>Draft name</label>

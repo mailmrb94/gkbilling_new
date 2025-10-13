@@ -7,9 +7,10 @@ A zero-cost, client‑side React app for high‑volume PDF invoice generation (s
 - Import **customers.csv**, **books_catalog.csv**, and optional **line_items.csv**
 - Build/edit invoice interactively (add from Books tab, edit qty/rate/discount/tax)
 - Manually add quick one-off books with an in-app modal
-- Save, load, and delete invoice drafts stored in browser localStorage
+- Save, load, and delete invoice drafts with automatic Supabase sync (falls back to browser storage when Supabase is not configured)
+- Books, customers, and generated invoices persist to Supabase Postgres when credentials are provided
 - **Generate Single PDF** or **ZIP of PDFs** (one per customer)
-- All processing runs **locally** in your browser
+- All PDF generation happens **locally** in your browser
 
 ## Why rates showed a leading `1`
 jsPDF's default Helvetica font does not support the `₹` glyph, which rendered as a stray `1`.  
@@ -40,12 +41,30 @@ npm run build
 npm run preview
 ```
 
-## Save drafts now, move to a real database later
-- Drafts you save in the **Invoice** tab live entirely in the browser's `localStorage` (key `data.savedInvoices`).
-- To migrate to a hosted backend, map that draft shape `{ label, lines, meta, pdfColumnPrefs }` into a persistence layer of your choice.
-- **Supabase** works great if you want instant hosted Postgres with row-level security and auth. Define tables for `customers`, `catalog`, and `invoice_drafts`, then swap the `usePersistentState` hooks for API calls.
-- For a quick local-first stack, SQLite via tools such as **ElectricSQL**, **Turso/libSQL**, or even a desktop Electron shell would work. You can also point the app at a REST/GraphQL API that wraps SQLite/MySQL/Postgres.
-- When you wire up a backend, keep the optimistic localStorage draft so users can continue offline and sync changes when online.
+## Data persistence & Supabase setup
+- When Supabase credentials are supplied the app keeps **books**, **customers**, and **draft invoices** in Postgres and automatically appends every generated invoice (single or batch) to an `invoices` ledger.
+- If credentials are missing the UI gracefully falls back to browser `localStorage`, so you can keep working offline and sync later.
+
+### Environment variables
+Create a `.env.local` (or export variables before `npm run dev`) with:
+
+```bash
+VITE_SUPABASE_URL="https://<project>.supabase.co"
+VITE_SUPABASE_ANON_KEY="<anon key>"
+VITE_SUPABASE_WORKSPACE="garani-publication" # any partitioning label you prefer
+```
+
+The optional `VITE_SUPABASE_WORKSPACE` lets you isolate data per business unit or environment. Every row the app writes includes this `workspace_id` so you can enforce row-level security policies in Supabase.
+
+### Recommended schema
+Run the SQL in [`supabase/schema.sql`](supabase/schema.sql) inside the Supabase SQL editor (or `psql`). It creates four tables and the composite unique indexes the React client relies on:
+
+- `books` – catalog entries (`workspace_id`, `uid`, `sku`, `title`, `author`, `publisher`, pricing defaults, timestamps).
+- `customers` – roster (`workspace_id`, `uid`, `invoice_no`, contact fields, GST/PAN, notes, timestamps, optional JSON `meta`).
+- `draft_invoices` – saved work-in-progress invoices with JSON `meta`, `lines`, `pdf_column_prefs`, and `updated_at` for ordering.
+- `invoices` – append-only audit log capturing every generated invoice (`workspace_id`, `invoice_no`, `customer_name`, `meta`, `items`, `totals`, `pdf_column_prefs`, `source`, `created_at`).
+
+Each table carries a `workspace_id` and `uid` (except the append-only `invoices` table, which uses a UUID primary key) so you can enable Row Level Security and policies such as `auth.uid()` ↔ workspace checks. Add triggers to maintain `updated_at` automatically if you prefer server-side timestamps.
 
 ## Switch back to `₹` symbol (optional)
 Embed a TTF font that supports the rupee glyph and set it in jsPDF:
