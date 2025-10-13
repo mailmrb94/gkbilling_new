@@ -187,11 +187,10 @@ export default function App(){
               <span className="pill">{filteredBooks.length} matching titles</span>
             </div>
             <input type="file" accept=".csv" onChange={onLoadCatalog} />
-            <div style={{marginTop:16}}>
-              <input className="input" placeholder="Search title, author, publisher or SKU" value={filter} onChange={e=>setFilter(e.target.value)} />
-              <div style={{marginTop:12, display:'flex', justifyContent:'space-between', gap:12, flexWrap:'wrap'}}>
-                <span className="pill">Showing {filteredBooks.length} of {catalog.length || 0}</span>
-                <button className="btn sky" onClick={()=>addAllBooks(filteredBooks)}>Add All Filtered</button>
+            <div style={{marginTop:8}}>
+              <input className="input" placeholder="Search title/author/publisher" value={filter} onChange={e=>setFilter(e.target.value)} />
+              <div style={{marginTop:8, display:'flex', justifyContent:'flex-end', gap:8}}>
+                <button className="btn gray" onClick={()=>addAllBooks(filteredBooks)}>Add All Filtered</button>
               </div>
             </div>
             <div style={{maxHeight:360, overflow:'auto', marginTop:16}}>
