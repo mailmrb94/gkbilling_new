@@ -118,13 +118,27 @@ export default function App(){
   const [customers,setCustomers]=usePersistentState("data.customers", []);
   const [batchItems,setBatchItems]=usePersistentState("data.batchItems", []);
   const [lines,setLines]=usePersistentState("data.lines", []);
+  const [savedInvoices,setSavedInvoices]=usePersistentState("data.savedInvoices", []);
   const [defaultTaxPct,setDefaultTaxPct]=usePersistentState("settings.defaultTaxPct", 18);
   const [pdfColumnPrefs,setPdfColumnPrefs]=usePersistentState("settings.pdfColumnPrefs", () => ({}));
   const [filter,setFilter]=usePersistentState("ui.filter", "");
   const [selectedCustomer,setSelectedCustomer]=usePersistentState("ui.selectedCustomer", null);
   const [dragIndex,setDragIndex]=useState(null);
   const [dragOverIndex,setDragOverIndex]=useState(null);
+  const [isBookModalOpen,setIsBookModalOpen]=useState(false);
+  const [bookForm,setBookForm]=useState(()=>({ sku:"", title:"", author:"", publisher:"", mrp:"", default_discount_pct:"", default_tax_pct:"" }));
+  const [autoAddNewBook,setAutoAddNewBook]=useState(true);
+  const [draftLabel,setDraftLabel]=useState("");
   const dragIndexRef = React.useRef(null);
+
+  useEffect(()=>{
+    if(!isBookModalOpen) return;
+    const handler=(event)=>{
+      if(event.key==='Escape') setIsBookModalOpen(false);
+    };
+    window.addEventListener('keydown', handler);
+    return ()=>window.removeEventListener('keydown', handler);
+  },[isBookModalOpen]);
 
   const filteredBooks = useMemo(()=>{ const q=filter.trim().toLowerCase(); if(!q) return catalog; return catalog.filter(b=>[b.sku,b.title,b.author,b.publisher].filter(Boolean).some(f=>String(f).toLowerCase().includes(q))); },[filter,catalog]);
 
@@ -246,7 +260,109 @@ export default function App(){
 
   function pickCustomer(inv){ const c=customers.find(r=>String(r.invoice_no)===String(inv)); if(c) setSelectedCustomer(c); }
 
-  function generateSingle(){ const meta=selectedCustomer||{ invoice_no:"DRAFT-001", invoice_date:dayjs().format("DD-MM-YYYY"), due_date:dayjs().format("DD-MM-YYYY"), customer_name:"Walk-in Customer", billing_address:"", shipping_address:"", gstin:"", pan:"", place_of_supply:"Karnataka", notes:"" }; const doc=renderInvoicePdf({ meta, items:lines, totals, columnOptions:pdfColumnPrefs }); doc.save(`${meta.invoice_no||"invoice"}.pdf`); }
+  function currentInvoiceMeta(){
+    return selectedCustomer||{
+      invoice_no:"DRAFT-001",
+      invoice_date:dayjs().format("DD-MM-YYYY"),
+      due_date:dayjs().format("DD-MM-YYYY"),
+      customer_name:"Walk-in Customer",
+      billing_address:"",
+      shipping_address:"",
+      gstin:"",
+      pan:"",
+      place_of_supply:"Karnataka",
+      notes:""
+    };
+  }
+
+  function generateSingle(){ const meta=currentInvoiceMeta(); const doc=renderInvoicePdf({ meta, items:lines, totals, columnOptions:pdfColumnPrefs }); doc.save(`${meta.invoice_no||"invoice"}.pdf`); }
+
+  function openAddBookModal(){
+    setBookForm({ sku:"", title:"", author:"", publisher:"", mrp:"", default_discount_pct:"", default_tax_pct:"" });
+    setAutoAddNewBook(true);
+    setIsBookModalOpen(true);
+  }
+
+  function upsertBook(book){
+    setCatalog(prev=>{
+      const next=[...prev];
+      const targetKey=(val)=>String(val||"").trim().toLowerCase();
+      const matchIndex=next.findIndex(existing=>{
+        if(book.sku && existing.sku){
+          return targetKey(existing.sku)===targetKey(book.sku);
+        }
+        return targetKey(existing.title)===targetKey(book.title);
+      });
+      if(matchIndex>=0){
+        next[matchIndex]={ ...next[matchIndex], ...book };
+      }else{
+        next.push(book);
+      }
+      return next;
+    });
+  }
+
+  function submitBookForm(e){
+    e.preventDefault();
+    const title=bookForm.title?.trim();
+    if(!title){ alert("Please enter a book title."); return; }
+    const newBook={
+      sku:bookForm.sku?.trim()||"",
+      title,
+      author:bookForm.author?.trim()||"",
+      publisher:bookForm.publisher?.trim()||"",
+      mrp:asNumber(bookForm.mrp,0),
+      default_discount_pct:asNumber(bookForm.default_discount_pct,0),
+      default_tax_pct:bookForm.default_tax_pct!==""?asNumber(bookForm.default_tax_pct,0):(defaultTaxPct??0)
+    };
+    upsertBook(newBook);
+    if(autoAddNewBook){
+      addLine(newBook);
+    }
+    setIsBookModalOpen(false);
+  }
+
+  function saveCurrentDraft(){
+    if(!lines.length){ alert("Add at least one line item before saving a draft."); return; }
+    const meta=currentInvoiceMeta();
+    const label=(draftLabel||meta.invoice_no||"Draft").trim();
+    const timestamp=new Date().toISOString();
+    setSavedInvoices(prev=>{
+      const linesCopy=lines.map(l=>({ ...l }));
+      const payload={
+        label:label||"Draft",
+        lines:linesCopy,
+        meta:{ ...meta },
+        pdfColumnPrefs:{ ...pdfColumnPrefs },
+        createdAt:timestamp,
+        updatedAt:timestamp
+      };
+      const existingIndex=prev.findIndex(d=>d.label.toLowerCase()===payload.label.toLowerCase());
+      if(existingIndex>=0){
+        const existing=prev[existingIndex];
+        const ensuredId=existing.id || existing.label || `draft-${Date.now()}`;
+        const updated={ ...existing, ...payload, id:ensuredId, createdAt:existing.createdAt||timestamp, updatedAt:timestamp };
+        const clone=[...prev];
+        clone[existingIndex]=updated;
+        return clone.sort((a,b)=>new Date(b.updatedAt).getTime()-new Date(a.updatedAt).getTime());
+      }
+      const id=`draft-${Date.now()}`;
+      const merged={ id, ...payload };
+      return [...prev, merged].sort((a,b)=>new Date(b.updatedAt).getTime()-new Date(a.updatedAt).getTime());
+    });
+    setDraftLabel(label||"Draft");
+  }
+
+  function loadDraft(draft){
+    if(!draft) return;
+    setLines(draft.lines?.map(l=>({ ...l }))||[]);
+    setPdfColumnPrefs(draft.pdfColumnPrefs||{});
+    setSelectedCustomer(draft.meta||null);
+    setDraftLabel(draft.label||"");
+    setTab('invoice');
+  }
+
+  function deleteDraft(identifier){ setSavedInvoices(prev=>prev.filter(d=>(d.id??d.label)!==(identifier??""))); }
 
   async function generateBatch(){
     if(!customers.length){ alert("Load customers.csv first"); return; }
@@ -337,6 +453,7 @@ export default function App(){
             <div style={{marginTop:8}}>
               <input className="input" placeholder="Search title/author/publisher" value={filter} onChange={e=>setFilter(e.target.value)} />
               <div style={{marginTop:8, display:'flex', justifyContent:'flex-end', gap:8}}>
+                <button className="btn" style={{background:'linear-gradient(135deg, #f472b6, #ec4899)', color:'#fff'}} onClick={openAddBookModal}>Add Book Manually</button>
                 <button className="btn gray" onClick={()=>addAllBooks(filteredBooks)}>Add All Filtered</button>
               </div>
             </div>
@@ -397,6 +514,41 @@ export default function App(){
                 <span style={{fontSize:12, color:'#64748b'}}>Net column is always included.</span>
               </div>
             </div>
+            <div style={{marginTop:24, padding:'16px', background:'#f1f5f9', borderRadius:12}}>
+              <h3 style={{marginTop:0, fontSize:16, color:'#0f172a'}}>Invoice Drafts</h3>
+              <p style={{color:'#475569', fontSize:12, marginTop:0}}>Save your current invoice so you can pause mid-way and resume later. Drafts live in your browser storage.</p>
+              <div style={{display:'flex', flexWrap:'wrap', gap:12}}>
+                <div style={{flex:'1 1 220px', minWidth:220}}>
+                  <label style={{marginBottom:6}}>Draft name</label>
+                  <input className="input" value={draftLabel} onChange={e=>setDraftLabel(e.target.value)} placeholder="e.g. Invoice 1024" />
+                </div>
+                <div style={{display:'flex', alignItems:'flex-end'}}>
+                  <button className="btn sky" style={{padding:'10px 16px'}} onClick={saveCurrentDraft}>Save Draft</button>
+                </div>
+              </div>
+              <div style={{marginTop:16, maxHeight:200, overflow:'auto', borderRadius:12, border:'1px solid rgba(148,163,184,0.35)'}}>
+                <table style={{margin:0}}>
+                  <thead><tr><th style={{width:'40%'}}>Draft</th><th>Updated</th><th style={{width:140}}>Actions</th></tr></thead>
+                  <tbody>
+                    {savedInvoices.length?savedInvoices.map((draft)=>(
+                      <tr key={draft.id||draft.label}>
+                        <td>
+                          <div style={{fontWeight:600}}>{draft.label}</div>
+                          <div style={{fontSize:12, color:'#64748b'}}>Lines: {draft.lines?.length||0}</div>
+                        </td>
+                        <td style={{fontSize:12, color:'#475569'}}>{dayjs(draft.updatedAt).format('DD MMM YYYY, HH:mm')}</td>
+                        <td style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+                          <button className="btn sky" style={{flex:'1 1 auto'}} onClick={()=>loadDraft(draft)}>Load</button>
+                          <button className="btn gray" style={{flex:'1 1 auto'}} onClick={()=>deleteDraft(draft.id??draft.label)}>Delete</button>
+                        </td>
+                      </tr>
+                    )):(
+                      <tr><td colSpan="3" style={{textAlign:'center', color:'#64748b'}}>No drafts saved yet.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
             <p style={{color:'#475569', fontSize:12, marginTop:16}}>Drag the order column handle to arrange invoice lines before exporting.</p>
             <div style={{overflow:'auto', marginTop:12}}>
               <table>
@@ -445,6 +597,59 @@ export default function App(){
           </div>
         )}
       </div>
+      {isBookModalOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={e=>{ if(e.target===e.currentTarget) setIsBookModalOpen(false); }}>
+          <div className="modal-panel">
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
+              <h3 style={{margin:0, fontSize:18}}>Add Book</h3>
+              <button className="btn gray" type="button" onClick={()=>setIsBookModalOpen(false)}>Close</button>
+            </div>
+            <p style={{marginTop:0, fontSize:13, color:'#475569'}}>Drop in a quick title without editing your CSV. We will keep it in your local catalog.</p>
+            <form onSubmit={submitBookForm}>
+              <div style={{display:'grid', gap:12}}>
+                <div>
+                  <label>Title *</label>
+                  <input className="input" value={bookForm.title} onChange={e=>setBookForm(prev=>({ ...prev, title:e.target.value }))} required />
+                </div>
+                <div>
+                  <label>Author</label>
+                  <input className="input" value={bookForm.author} onChange={e=>setBookForm(prev=>({ ...prev, author:e.target.value }))} />
+                </div>
+                <div>
+                  <label>Publisher</label>
+                  <input className="input" value={bookForm.publisher} onChange={e=>setBookForm(prev=>({ ...prev, publisher:e.target.value }))} />
+                </div>
+                <div>
+                  <label>SKU</label>
+                  <input className="input" value={bookForm.sku} onChange={e=>setBookForm(prev=>({ ...prev, sku:e.target.value }))} />
+                </div>
+                <div style={{display:'grid', gap:12, gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))'}}>
+                  <div>
+                    <label>MRP</label>
+                    <input className="input" value={bookForm.mrp} onChange={e=>setBookForm(prev=>({ ...prev, mrp:e.target.value }))} placeholder="0" />
+                  </div>
+                  <div>
+                    <label>Default Discount %</label>
+                    <input className="input" value={bookForm.default_discount_pct} onChange={e=>setBookForm(prev=>({ ...prev, default_discount_pct:e.target.value }))} placeholder="0" />
+                  </div>
+                  <div>
+                    <label>Default Tax %</label>
+                    <input className="input" value={bookForm.default_tax_pct} onChange={e=>setBookForm(prev=>({ ...prev, default_tax_pct:e.target.value }))} placeholder={String(defaultTaxPct??0)} />
+                  </div>
+                </div>
+                <label style={{display:'flex', alignItems:'center', gap:8, fontSize:13, color:'#0f172a'}}>
+                  <input type="checkbox" checked={autoAddNewBook} onChange={e=>setAutoAddNewBook(e.target.checked)} />
+                  <span>Add to current invoice</span>
+                </label>
+                <div style={{display:'flex', justifyContent:'flex-end', gap:8}}>
+                  <button className="btn gray" type="button" onClick={()=>setIsBookModalOpen(false)}>Cancel</button>
+                  <button className="btn sky" type="submit">Save Book</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
