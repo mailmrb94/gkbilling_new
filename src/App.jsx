@@ -47,7 +47,7 @@ function computeLine({ qty = 1, mrp = 0, rate, discountPct = 0, taxPct = 0 }) {
 }
 function parseCsv(file) { return new Promise((resolve, reject) => Papa.parse(file, { header:true, skipEmptyLines:true, dynamicTyping:true, complete: r=>resolve(r.data), error: reject })); }
 
-function renderInvoicePdf({ meta, items, totals, brand }) {
+function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const doc = new jsPDF({ unit:"pt", format:"a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   brand = brand || { name: "GARANI PUBLICATION", address: "Old No.5A, New E351, 7th A Main Road, MSR Layout, Havanuru Layout, Bengaluru Urban, Bengaluru, Karnataka, 560073", phone: "Mobile: 9108447657", gstin: "GSTIN: 29CBIPN0092E1ZM" };
@@ -70,20 +70,25 @@ function renderInvoicePdf({ meta, items, totals, brand }) {
   });
 
   const startY = (doc.lastAutoTable?.finalY || y0+110) + 10;
-  const hasDiscount = totals.discount > 0.0001 || items.some(it=>asNumber(it.discountPct||0));
-  const head = [["#","Title / Description","Qty","Rate",...(hasDiscount?["Disc%"]:[]),"Tax%","Amount","Net"]];
+  const prefs = columnOptions || {};
+  const includeDiscount = prefs.discount ?? (totals.discount > 0.0001 || items.some(it=>asNumber(it.discountPct||0)));
+  const includeTax = prefs.tax ?? true;
+  const includeAmount = prefs.amount ?? true;
+  const head = [["#","Title / Description","Qty","Rate",...(includeDiscount?["Disc%"]:[]),...(includeTax?["Tax%"]:[]),...(includeAmount?["Amount"]:[]),"Net"]];
   const body = items.map((it,i)=>{
     const r=computeLine(it);
     const row=[String(i+1), `${it.title}${it.author?`\n${it.author}`:""}${it.publisher?` • ${it.publisher}`:""}`, String(it.qty||1), formatINR(r.appliedRate)];
-    if(hasDiscount) row.push(String(asNumber(it.discountPct||0)));
-    row.push(String(asNumber(it.taxPct||0)), formatINR(r.amount), formatINR(r.net));
+    if(includeDiscount) row.push(String(asNumber(it.discountPct||0)));
+    if(includeTax) row.push(String(asNumber(it.taxPct||0)));
+    if(includeAmount) row.push(formatINR(r.amount));
+    row.push(formatINR(r.net));
     return row;
   });
   const columnStyles={0:{cellWidth:22},1:{cellWidth:(pageWidth-80)*0.42},2:{halign:"right",cellWidth:34},3:{halign:"right",cellWidth:70}};
   let colIndex=4;
-  if(hasDiscount){ columnStyles[colIndex]={halign:"right",cellWidth:44}; colIndex+=1; }
-  columnStyles[colIndex]={halign:"right",cellWidth:44}; colIndex+=1;
-  columnStyles[colIndex]={halign:"right",cellWidth:80}; colIndex+=1;
+  if(includeDiscount){ columnStyles[colIndex]={halign:"right",cellWidth:44}; colIndex+=1; }
+  if(includeTax){ columnStyles[colIndex]={halign:"right",cellWidth:44}; colIndex+=1; }
+  if(includeAmount){ columnStyles[colIndex]={halign:"right",cellWidth:80}; colIndex+=1; }
   columnStyles[colIndex]={halign:"right",cellWidth:80};
   autoTable(doc,{
     startY, head, body, styles:{ fontSize:9 }, headStyles:{ fillColor:[30,41,59] }, margin:{ left:40, right:40 },
@@ -92,7 +97,7 @@ function renderInvoicePdf({ meta, items, totals, brand }) {
 
   const y1 = doc.lastAutoTable?.finalY || startY+100;
   const totalsRows=[["Taxable Amount", formatINR(totals.taxable)]];
-  if(hasDiscount) totalsRows.push(["Total Discount", formatINR(totals.discount)]);
+  if(includeDiscount) totalsRows.push(["Total Discount", formatINR(totals.discount)]);
   totalsRows.push(["Total Tax", formatINR(totals.tax)],["Grand Total", formatINR(totals.net)]);
   autoTable(doc,{
     startY:y1+10, theme:"plain", margin:{ left:40, right:40 }, styles:{ fontSize:11, halign:"center" },
@@ -114,6 +119,7 @@ export default function App(){
   const [batchItems,setBatchItems]=usePersistentState("data.batchItems", []);
   const [lines,setLines]=usePersistentState("data.lines", []);
   const [defaultTaxPct,setDefaultTaxPct]=usePersistentState("settings.defaultTaxPct", 18);
+  const [pdfColumnPrefs,setPdfColumnPrefs]=usePersistentState("settings.pdfColumnPrefs", () => ({}));
   const [filter,setFilter]=usePersistentState("ui.filter", "");
   const [selectedCustomer,setSelectedCustomer]=usePersistentState("ui.selectedCustomer", null);
   const [dragIndex,setDragIndex]=useState(null);
@@ -213,6 +219,18 @@ export default function App(){
   function removeLine(i){ setLines(p=>p.filter((_,idx)=>idx!==i)); }
 
   const totals = useMemo(()=>lines.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0 }),[lines]);
+  const autoDiscountColumn = useMemo(()=>totals.discount > 0.0001 || lines.some(it=>asNumber(it.discountPct||0)),[totals.discount,lines]);
+  const pdfColumns = useMemo(()=>({
+    discount: pdfColumnPrefs.discount ?? autoDiscountColumn,
+    tax: pdfColumnPrefs.tax ?? true,
+    amount: pdfColumnPrefs.amount ?? true
+  }),[pdfColumnPrefs,autoDiscountColumn]);
+  const hasCustomPdfColumns = useMemo(()=>Object.keys(pdfColumnPrefs).length>0,[pdfColumnPrefs]);
+
+  const togglePdfColumn = (key) => {
+    setPdfColumnPrefs(prev=>({ ...prev, [key]: !pdfColumns[key] }));
+  };
+  const resetPdfColumns = () => setPdfColumnPrefs({});
 
   const statEntries = useMemo(()=>[
     { label:"Customers Loaded", value: customers.length },
@@ -228,7 +246,7 @@ export default function App(){
 
   function pickCustomer(inv){ const c=customers.find(r=>String(r.invoice_no)===String(inv)); if(c) setSelectedCustomer(c); }
 
-  function generateSingle(){ const meta=selectedCustomer||{ invoice_no:"DRAFT-001", invoice_date:dayjs().format("DD-MM-YYYY"), due_date:dayjs().format("DD-MM-YYYY"), customer_name:"Walk-in Customer", billing_address:"", shipping_address:"", gstin:"", pan:"", place_of_supply:"Karnataka", notes:"" }; const doc=renderInvoicePdf({ meta, items:lines, totals }); doc.save(`${meta.invoice_no||"invoice"}.pdf`); }
+  function generateSingle(){ const meta=selectedCustomer||{ invoice_no:"DRAFT-001", invoice_date:dayjs().format("DD-MM-YYYY"), due_date:dayjs().format("DD-MM-YYYY"), customer_name:"Walk-in Customer", billing_address:"", shipping_address:"", gstin:"", pan:"", place_of_supply:"Karnataka", notes:"" }; const doc=renderInvoicePdf({ meta, items:lines, totals, columnOptions:pdfColumnPrefs }); doc.save(`${meta.invoice_no||"invoice"}.pdf`); }
 
   async function generateBatch(){
     if(!customers.length){ alert("Load customers.csv first"); return; }
@@ -254,7 +272,7 @@ export default function App(){
         });
       const used = perItems.length?perItems:lines;
       const totals=used.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0 });
-      const doc=renderInvoicePdf({ meta:cust, items:used, totals });
+      const doc=renderInvoicePdf({ meta:cust, items:used, totals, columnOptions:pdfColumnPrefs });
       const blob=doc.output("blob");
       zip.file(`${invNo||"invoice"}.pdf`, blob);
     }
@@ -353,6 +371,30 @@ export default function App(){
               <div>
                 <label>Batch output</label>
                 <button className="btn green" style={{display:'block', width:'100%', marginTop:12}} onClick={generateBatch}>Generate ZIP of PDFs</button>
+              </div>
+            </div>
+            <div style={{marginTop:24, padding:'16px', background:'#f8fafc', borderRadius:12}}>
+              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+                <h3 style={{margin:0, fontSize:16, color:'#0f172a'}}>PDF Columns</h3>
+                {hasCustomPdfColumns && (
+                  <button className="btn gray" style={{padding:'6px 12px', fontSize:12}} onClick={resetPdfColumns}>Reset to defaults</button>
+                )}
+              </div>
+              <p style={{color:'#475569', fontSize:12, marginTop:0, marginBottom:12}}>Pick which columns should appear when you export the invoice PDF.</p>
+              <div style={{display:'flex', flexWrap:'wrap', gap:16}}>
+                <label style={{display:'flex', alignItems:'center', gap:8, fontSize:14, color:'#0f172a'}}>
+                  <input type="checkbox" checked={pdfColumns.discount} onChange={()=>togglePdfColumn('discount')} />
+                  <span>Discount %</span>
+                </label>
+                <label style={{display:'flex', alignItems:'center', gap:8, fontSize:14, color:'#0f172a'}}>
+                  <input type="checkbox" checked={pdfColumns.tax} onChange={()=>togglePdfColumn('tax')} />
+                  <span>Tax %</span>
+                </label>
+                <label style={{display:'flex', alignItems:'center', gap:8, fontSize:14, color:'#0f172a'}}>
+                  <input type="checkbox" checked={pdfColumns.amount} onChange={()=>togglePdfColumn('amount')} />
+                  <span>Amount</span>
+                </label>
+                <span style={{fontSize:12, color:'#64748b'}}>Net column is always included.</span>
               </div>
             </div>
             <p style={{color:'#475569', fontSize:12, marginTop:16}}>Drag the order column handle to arrange invoice lines before exporting.</p>
