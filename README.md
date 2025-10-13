@@ -6,6 +6,8 @@ A zero-cost, client‑side React app for high‑volume PDF invoice generation (s
 - **Tabs:** Customers • Books • Invoice
 - Import **customers.csv**, **books_catalog.csv**, and optional **line_items.csv**
 - Build/edit invoice interactively (add from Books tab, edit qty/rate/discount/tax)
+- Manually add quick one-off books with an in-app modal
+- Save, load, and delete invoice drafts stored in browser localStorage
 - **Generate Single PDF** or **ZIP of PDFs** (one per customer)
 - All processing runs **locally** in your browser
 
@@ -37,6 +39,13 @@ If `line_items.csv` is omitted, the interactive lines you add in the **Invoice**
 npm run build
 npm run preview
 ```
+
+## Save drafts now, move to a real database later
+- Drafts you save in the **Invoice** tab live entirely in the browser's `localStorage` (key `data.savedInvoices`).
+- To migrate to a hosted backend, map that draft shape `{ label, lines, meta, pdfColumnPrefs }` into a persistence layer of your choice.
+- **Supabase** works great if you want instant hosted Postgres with row-level security and auth. Define tables for `customers`, `catalog`, and `invoice_drafts`, then swap the `usePersistentState` hooks for API calls.
+- For a quick local-first stack, SQLite via tools such as **ElectricSQL**, **Turso/libSQL**, or even a desktop Electron shell would work. You can also point the app at a REST/GraphQL API that wraps SQLite/MySQL/Postgres.
+- When you wire up a backend, keep the optimistic localStorage draft so users can continue offline and sync changes when online.
 
 ## Switch back to `₹` symbol (optional)
 Embed a TTF font that supports the rupee glyph and set it in jsPDF:
