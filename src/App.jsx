@@ -46,23 +46,38 @@ function renderInvoicePdf({ meta, items, totals, brand }) {
   });
 
   const startY = (doc.lastAutoTable?.finalY || y0+110) + 10;
-  const head = [["#","Title / Description","Qty","Rate","Disc%","Tax%","Amount","Net"]];
-  const body = items.map((it,i)=>{ const r=computeLine(it); return [String(i+1), `${it.title}${it.author?`\n${it.author}`:""}${it.publisher?` • ${it.publisher}`:""}`, String(it.qty||1), formatINR(r.appliedRate), String(asNumber(it.discountPct||0)), String(asNumber(it.taxPct||0)), formatINR(r.amount), formatINR(r.net) ];});
+  const hasDiscount = totals.discount > 0.0001 || items.some(it=>asNumber(it.discountPct||0));
+  const head = [["#","Title / Description","Qty","Rate",...(hasDiscount?["Disc%"]:[]),"Tax%","Amount","Net"]];
+  const body = items.map((it,i)=>{
+    const r=computeLine(it);
+    const row=[String(i+1), `${it.title}${it.author?`\n${it.author}`:""}${it.publisher?` • ${it.publisher}`:""}`, String(it.qty||1), formatINR(r.appliedRate)];
+    if(hasDiscount) row.push(String(asNumber(it.discountPct||0)));
+    row.push(String(asNumber(it.taxPct||0)), formatINR(r.amount), formatINR(r.net));
+    return row;
+  });
+  const columnStyles={0:{cellWidth:22},1:{cellWidth:(pageWidth-80)*0.42},2:{halign:"right",cellWidth:34},3:{halign:"right",cellWidth:70}};
+  let colIndex=4;
+  if(hasDiscount){ columnStyles[colIndex]={halign:"right",cellWidth:44}; colIndex+=1; }
+  columnStyles[colIndex]={halign:"right",cellWidth:44}; colIndex+=1;
+  columnStyles[colIndex]={halign:"right",cellWidth:80}; colIndex+=1;
+  columnStyles[colIndex]={halign:"right",cellWidth:80};
   autoTable(doc,{
     startY, head, body, styles:{ fontSize:9 }, headStyles:{ fillColor:[30,41,59] }, margin:{ left:40, right:40 },
-    columnStyles:{0:{cellWidth:22},1:{cellWidth:(pageWidth-80)*0.42},2:{halign:"right",cellWidth:34},3:{halign:"right",cellWidth:70},4:{halign:"right",cellWidth:44},5:{halign:"right",cellWidth:44},6:{halign:"right",cellWidth:80},7:{halign:"right",cellWidth:80}}
+    columnStyles
   });
 
   const y1 = doc.lastAutoTable?.finalY || startY+100;
-  const totalsRows = [["Taxable Amount", formatINR(totals.taxable)],["Total Discount", formatINR(totals.discount)],["Total Tax", formatINR(totals.tax)],["Grand Total", formatINR(totals.net)]];
+  const totalsRows=[["Taxable Amount", formatINR(totals.taxable)]];
+  if(hasDiscount) totalsRows.push(["Total Discount", formatINR(totals.discount)]);
+  totalsRows.push(["Total Tax", formatINR(totals.tax)],["Grand Total", formatINR(totals.net)]);
   autoTable(doc,{
-    startY:y1+10, theme:"plain", margin:{ left:40, right:40 }, styles:{ fontSize:11 },
-    body: totalsRows.map(([k,v])=>[{content:k, styles:{ halign:"right", fontStyle:"bold" }},{content:v, styles:{ halign:"right" }}]),
+    startY:y1+10, theme:"plain", margin:{ left:40, right:40 }, styles:{ fontSize:11, halign:"center" },
+    body: totalsRows.map(([k,v])=>[{content:k, styles:{ fontStyle:"bold" }},{content:v}]),
     columnStyles:{0:{cellWidth:(pageWidth-80)*0.7},1:{cellWidth:(pageWidth-80)*0.3}}
   });
 
   autoTable(doc,{
-    startY:(doc.lastAutoTable?.finalY||y1+60)+8, theme:"plain", margin:{ left:40, right:40 }, styles:{ fontSize:9 },
+    startY:(doc.lastAutoTable?.finalY||y1+60)+8, theme:"plain", margin:{ left:40, right:40 }, styles:{ fontSize:9, halign:"center" },
     body:[[ {content:(meta.notes?`Notes: ${meta.notes}\n\n`:"")+"TERMS AND CONDITIONS\n1. Goods once sold will not be taken back or exchanged\n2. All disputes are subject to Bengaluru jurisdiction only"} ]]
   });
   return doc;
@@ -80,6 +95,21 @@ export default function App(){
   const filteredBooks = useMemo(()=>{ const q=filter.trim().toLowerCase(); if(!q) return catalog; return catalog.filter(b=>[b.sku,b.title,b.author,b.publisher].filter(Boolean).some(f=>String(f).toLowerCase().includes(q))); },[filter,catalog]);
 
   function addLine(b){ setLines(p=>[...p,{ sku:b.sku, title:b.title, author:b.author, publisher:b.publisher, qty:1, mrp:asNumber(b.mrp), rate:"", discountPct:asNumber(b.default_discount_pct||0), taxPct:asNumber(b.default_tax_pct||0) }]); }
+  function addAllBooks(list){
+    if(!list.length) return;
+    setLines(prev=>{
+      const existingKeys = new Set(prev.map(l=>`${l.sku||""}__${l.title||""}`));
+      const additions = [];
+      for(const b of list){
+        const key = `${b.sku||""}__${b.title||""}`;
+        if(existingKeys.has(key)) continue;
+        existingKeys.add(key);
+        additions.push({ sku:b.sku, title:b.title, author:b.author, publisher:b.publisher, qty:1, mrp:asNumber(b.mrp), rate:"", discountPct:asNumber(b.default_discount_pct||0), taxPct:asNumber(b.default_tax_pct||0) });
+      }
+      if(!additions.length) return prev;
+      return [...prev, ...additions];
+    });
+  }
   function updateLine(i,patch){ setLines(p=>p.map((l,idx)=>idx===i?{...l,...patch}:l)); }
   function removeLine(i){ setLines(p=>p.filter((_,idx)=>idx!==i)); }
 
@@ -128,6 +158,9 @@ export default function App(){
             <input type="file" accept=".csv" onChange={onLoadCatalog} />
             <div style={{marginTop:8}}>
               <input className="input" placeholder="Search title/author/publisher" value={filter} onChange={e=>setFilter(e.target.value)} />
+              <div style={{marginTop:8, display:'flex', justifyContent:'flex-end', gap:8}}>
+                <button className="btn gray" onClick={()=>addAllBooks(filteredBooks)}>Add All Filtered</button>
+              </div>
             </div>
             <div style={{maxHeight:360, overflow:'auto', marginTop:10}}>
               <table>
