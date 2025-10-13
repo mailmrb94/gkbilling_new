@@ -89,12 +89,27 @@ export default function App(){
   const [customers,setCustomers]=useState([]);
   const [batchItems,setBatchItems]=useState([]);
   const [lines,setLines]=useState([]);
+  const [defaultTaxPct,setDefaultTaxPct]=useState(18);
   const [filter,setFilter]=useState("");
   const [selectedCustomer,setSelectedCustomer]=useState(null);
 
   const filteredBooks = useMemo(()=>{ const q=filter.trim().toLowerCase(); if(!q) return catalog; return catalog.filter(b=>[b.sku,b.title,b.author,b.publisher].filter(Boolean).some(f=>String(f).toLowerCase().includes(q))); },[filter,catalog]);
 
-  function addLine(b){ setLines(p=>[...p,{ sku:b.sku, title:b.title, author:b.author, publisher:b.publisher, qty:1, mrp:asNumber(b.mrp), rate:"", discountPct:asNumber(b.default_discount_pct||0), taxPct:asNumber(b.default_tax_pct||0) }]); }
+  function addLine(b){
+    const fallbackTax = defaultTaxPct ?? 0;
+    const taxValue = b.default_tax_pct !== undefined ? b.default_tax_pct : fallbackTax;
+    setLines(p=>[...p,{
+      sku:b.sku,
+      title:b.title,
+      author:b.author,
+      publisher:b.publisher,
+      qty:1,
+      mrp:asNumber(b.mrp),
+      rate:"",
+      discountPct:asNumber(b.default_discount_pct||0),
+      taxPct:asNumber(taxValue)
+    }]);
+  }
   function addAllBooks(list){
     if(!list.length) return;
     setLines(prev=>{
@@ -104,11 +119,27 @@ export default function App(){
         const key = `${b.sku||""}__${b.title||""}`;
         if(existingKeys.has(key)) continue;
         existingKeys.add(key);
-        additions.push({ sku:b.sku, title:b.title, author:b.author, publisher:b.publisher, qty:1, mrp:asNumber(b.mrp), rate:"", discountPct:asNumber(b.default_discount_pct||0), taxPct:asNumber(b.default_tax_pct||0) });
+        const fallbackTax = defaultTaxPct ?? 0;
+        const taxValue = b.default_tax_pct !== undefined ? b.default_tax_pct : fallbackTax;
+        additions.push({
+          sku:b.sku,
+          title:b.title,
+          author:b.author,
+          publisher:b.publisher,
+          qty:1,
+          mrp:asNumber(b.mrp),
+          rate:"",
+          discountPct:asNumber(b.default_discount_pct||0),
+          taxPct:asNumber(taxValue)
+        });
       }
       if(!additions.length) return prev;
       return [...prev, ...additions];
     });
+  }
+  function applyDefaultTax(){
+    const tax = asNumber(defaultTaxPct??0,0);
+    setLines(p=>p.map(l=>({ ...l, taxPct:tax })));
   }
   function updateLine(i,patch){ setLines(p=>p.map((l,idx)=>idx===i?{...l,...patch}:l)); }
   function removeLine(i){ setLines(p=>p.filter((_,idx)=>idx!==i)); }
@@ -131,7 +162,37 @@ export default function App(){
 
   function generateSingle(){ const meta=selectedCustomer||{ invoice_no:"DRAFT-001", invoice_date:dayjs().format("DD-MM-YYYY"), due_date:dayjs().format("DD-MM-YYYY"), customer_name:"Walk-in Customer", billing_address:"", shipping_address:"", gstin:"", pan:"", place_of_supply:"Karnataka", notes:"" }; const doc=renderInvoicePdf({ meta, items:lines, totals }); doc.save(`${meta.invoice_no||"invoice"}.pdf`); }
 
-  async function generateBatch(){ if(!customers.length){ alert("Load customers.csv first"); return; } const zip=new JSZip(); for(const cust of customers){ const invNo=cust.invoice_no; const perItems=(batchItems.length?batchItems:lines).filter(li=>batchItems.length?String(li.invoice_no)===String(invNo):true).map(li=>{ const match=catalog.find(b=>String(b.sku)===String(li.sku_or_title)||String(b.title).toLowerCase()===String(li.sku_or_title).toLowerCase()); const title=match?.title||li.sku_or_title||li.title||"Item"; return { title, author:match?.author||li.author||"", publisher:match?.publisher||li.publisher||"", qty:asNumber(li.qty||1), mrp:asNumber(li.mrp??match?.mrp??li.rate_override??0), rate:li.rate_override??"", discountPct:asNumber(li.discount_pct_override??match?.default_discount_pct??0), taxPct:asNumber(li.tax_pct_override??match?.default_tax_pct??0) }; }); const used = perItems.length?perItems:lines; const totals=used.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0 }); const doc=renderInvoicePdf({ meta:cust, items:used, totals }); const blob=doc.output("blob"); zip.file(`${invNo||"invoice"}.pdf`, blob); } const out=await zip.generateAsync({ type:"blob" }); saveAs(out, `invoices_${dayjs().format("YYYYMMDD_HHmm")}.zip`); }
+  async function generateBatch(){
+    if(!customers.length){ alert("Load customers.csv first"); return; }
+    const zip=new JSZip();
+    for(const cust of customers){
+      const invNo=cust.invoice_no;
+      const perItems=(batchItems.length?batchItems:lines)
+        .filter(li=>batchItems.length?String(li.invoice_no)===String(invNo):true)
+        .map(li=>{
+          const match=catalog.find(b=>String(b.sku)===String(li.sku_or_title)||String(b.title).toLowerCase()===String(li.sku_or_title).toLowerCase());
+          const title=match?.title||li.sku_or_title||li.title||"Item";
+          const taxSource = li.tax_pct_override??match?.default_tax_pct??defaultTaxPct??0;
+          return {
+            title,
+            author:match?.author||li.author||"",
+            publisher:match?.publisher||li.publisher||"",
+            qty:asNumber(li.qty||1),
+            mrp:asNumber(li.mrp??match?.mrp??li.rate_override??0),
+            rate:li.rate_override??"",
+            discountPct:asNumber(li.discount_pct_override??match?.default_discount_pct??0),
+            taxPct:asNumber(taxSource)
+          };
+        });
+      const used = perItems.length?perItems:lines;
+      const totals=used.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0 });
+      const doc=renderInvoicePdf({ meta:cust, items:used, totals });
+      const blob=doc.output("blob");
+      zip.file(`${invNo||"invoice"}.pdf`, blob);
+    }
+    const out=await zip.generateAsync({ type:"blob" });
+    saveAs(out, `invoices_${dayjs().format("YYYYMMDD_HHmm")}.zip`);
+  }
 
   return (
     <div className="app-shell">
