@@ -116,6 +116,9 @@ export default function App(){
   const [defaultTaxPct,setDefaultTaxPct]=usePersistentState("settings.defaultTaxPct", 18);
   const [filter,setFilter]=usePersistentState("ui.filter", "");
   const [selectedCustomer,setSelectedCustomer]=usePersistentState("ui.selectedCustomer", null);
+  const [dragIndex,setDragIndex]=useState(null);
+  const [dragOverIndex,setDragOverIndex]=useState(null);
+  const dragIndexRef = React.useRef(null);
 
   const filteredBooks = useMemo(()=>{ const q=filter.trim().toLowerCase(); if(!q) return catalog; return catalog.filter(b=>[b.sku,b.title,b.author,b.publisher].filter(Boolean).some(f=>String(f).toLowerCase().includes(q))); },[filter,catalog]);
 
@@ -166,6 +169,47 @@ export default function App(){
     setLines(p=>p.map(l=>({ ...l, taxPct:tax })));
   }
   function updateLine(i,patch){ setLines(p=>p.map((l,idx)=>idx===i?{...l,...patch}:l)); }
+  function reorderLines(from,to){
+    if(from===null || to===null || from===to) return;
+    setLines(prev=>{
+      if(from<0 || from>=prev.length || to<0 || to>=prev.length) return prev;
+      const next=[...prev];
+      const [moved]=next.splice(from,1);
+      next.splice(to,0,moved);
+      return next;
+    });
+  }
+  function handleDragStart(index){
+    dragIndexRef.current=index;
+    setDragIndex(index);
+    setDragOverIndex(index);
+  }
+  function handleDragEnter(index){
+    if(index===dragOverIndex || index===dragIndexRef.current) return;
+    setDragOverIndex(index);
+  }
+  function handleDragEnd(){
+    dragIndexRef.current=null;
+    setDragIndex(null);
+    setDragOverIndex(null);
+  }
+  function handleDrop(index,{ after=false }={}){
+    const from=dragIndexRef.current;
+    const total=lines.length;
+    if(from===null || total<=1){
+      handleDragEnd();
+      return;
+    }
+    let target=index;
+    if(after){
+      target = from<index ? index : index+1;
+    }else{
+      target = from<index ? index-1 : index;
+    }
+    target=Math.max(0, Math.min(target, total-1));
+    handleDragEnd();
+    reorderLines(from,target);
+  }
   function removeLine(i){ setLines(p=>p.filter((_,idx)=>idx!==i)); }
 
   const totals = useMemo(()=>lines.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0 }),[lines]);
@@ -311,12 +355,32 @@ export default function App(){
                 <button className="btn green" style={{display:'block', width:'100%', marginTop:12}} onClick={generateBatch}>Generate ZIP of PDFs</button>
               </div>
             </div>
-            <div style={{overflow:'auto', marginTop:20}}>
+            <p style={{color:'#475569', fontSize:12, marginTop:16}}>Drag the order column handle to arrange invoice lines before exporting.</p>
+            <div style={{overflow:'auto', marginTop:12}}>
               <table>
-                <thead><tr><th>Title</th><th>Qty</th><th>MRP</th><th>Rate</th><th>Disc%</th><th>Tax%</th><th>Amount</th><th>Net</th><th></th></tr></thead>
+                <thead><tr><th style={{width:72}}>Order ↕</th><th>Title</th><th>Qty</th><th>MRP</th><th>Rate</th><th>Disc%</th><th>Tax%</th><th>Amount</th><th>Net</th><th></th></tr></thead>
                 <tbody>
-                  {lines.map((l,i)=>{ const r=computeLine(l); return (
-                    <tr key={i}>
+                  {lines.map((l,i)=>{ const r=computeLine(l); const isActive = dragIndex===i; const isTarget = dragOverIndex===i && dragIndex!==null && dragIndex!==i; return (
+                    <tr
+                      key={i}
+                      draggable={lines.length>1}
+                      onDragStart={()=>handleDragStart(i)}
+                      onDragEnter={()=>handleDragEnter(i)}
+                      onDragOver={e=>e.preventDefault()}
+                      onDragEnd={handleDragEnd}
+                      onDrop={e=>{ e.preventDefault(); e.stopPropagation(); const after=dragIndexRef.current!==null && dragIndexRef.current < i; handleDrop(i,{ after }); }}
+                      style={{
+                        backgroundColor: isTarget ? '#e0f2fe' : undefined,
+                        opacity: isActive ? 0.6 : 1,
+                        cursor: lines.length>1 ? 'move' : 'default'
+                      }}
+                    >
+                      <td style={{textAlign:'center', fontWeight:600, color:'#334155'}}>
+                        <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:2}}>
+                          <span aria-hidden="true" style={{fontSize:12, color:'#94a3b8'}}>☰</span>
+                          <span>{i+1}</span>
+                        </div>
+                      </td>
                       <td>
                         <div style={{fontWeight:600, color:'#0f172a'}}>{l.title}</div>
                         <div style={{fontSize:12, color:'#64748b'}}>{[l.author,l.publisher].filter(Boolean).join(' • ')}</div>
@@ -331,9 +395,9 @@ export default function App(){
                       <td><button className="btn gray" onClick={()=>removeLine(i)}>Remove</button></td>
                     </tr>
                   )})}
-                  {!lines.length && <tr><td colSpan="9" style={{color:'#64748b', textAlign:'center'}}>No lines yet — go to Books tab and click “Add”.</td></tr>}
+                  {!lines.length && <tr><td colSpan="10" style={{color:'#64748b', textAlign:'center'}}>No lines yet — go to Books tab and click “Add”.</td></tr>}
                 </tbody>
-                <tfoot><tr><td colSpan="6" style={{textAlign:'right', fontWeight:700}}>Totals</td><td style={{textAlign:'right'}}>{formatINR(totals.amount)}</td><td style={{textAlign:'right', color:'#0ea5e9', fontWeight:700}}>{formatINR(totals.net)}</td><td></td></tr></tfoot>
+                <tfoot><tr><td colSpan="7" style={{textAlign:'right', fontWeight:700}}>Totals</td><td style={{textAlign:'right'}}>{formatINR(totals.amount)}</td><td style={{textAlign:'right', color:'#0ea5e9', fontWeight:700}}>{formatINR(totals.net)}</td><td></td></tr></tfoot>
               </table>
             </div>
           </div>
