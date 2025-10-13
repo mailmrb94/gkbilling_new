@@ -33,7 +33,108 @@ function usePersistentState(key, defaultValue) {
 }
 
 // Currency without rupee glyph to avoid jsPDF helvetica fallback rendering '1'
-function formatINR(n){ const num = Number(n||0); return "Rs " + new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(num); }
+function formatINR(n){
+  const num = Number(n || 0);
+  return "Rs " + new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(num);
+}
+function formatQuantity(n){
+  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(Number(n || 0));
+}
+const BELOW_TWENTY = [
+  "Zero",
+  "One",
+  "Two",
+  "Three",
+  "Four",
+  "Five",
+  "Six",
+  "Seven",
+  "Eight",
+  "Nine",
+  "Ten",
+  "Eleven",
+  "Twelve",
+  "Thirteen",
+  "Fourteen",
+  "Fifteen",
+  "Sixteen",
+  "Seventeen",
+  "Eighteen",
+  "Nineteen"
+];
+const TENS = [
+  "",
+  "",
+  "Twenty",
+  "Thirty",
+  "Forty",
+  "Fifty",
+  "Sixty",
+  "Seventy",
+  "Eighty",
+  "Ninety"
+];
+const INDIAN_UNITS = ["", "Thousand", "Lakh", "Crore", "Arab", "Kharab"];
+function convertBelowThousand(num){
+  let value = num % 1000;
+  const parts = [];
+  if(value >= 100){
+    parts.push(`${BELOW_TWENTY[Math.floor(value / 100)]} Hundred`);
+    value %= 100;
+  }
+  if(value >= 20){
+    const tenWord = TENS[Math.floor(value / 10)];
+    const remainder = value % 10;
+    parts.push(remainder ? `${tenWord} ${BELOW_TWENTY[remainder]}` : tenWord);
+  }else if(value > 0){
+    parts.push(BELOW_TWENTY[value]);
+  }
+  return parts.join(" ").trim();
+}
+function numberToIndianWords(num){
+  const value = Math.floor(Math.abs(num));
+  if(value === 0) return "Zero";
+  let remainder = value;
+  let unitIndex = 0;
+  const words = [];
+  while(remainder > 0 && unitIndex < INDIAN_UNITS.length){
+    const divisor = unitIndex === 0 ? 1000 : 100;
+    const chunk = remainder % divisor;
+    remainder = Math.floor(remainder / divisor);
+    if(chunk){
+      const chunkWords = convertBelowThousand(chunk);
+      const label = INDIAN_UNITS[unitIndex];
+      words.unshift(label ? `${chunkWords} ${label}`.trim() : chunkWords);
+    }
+    unitIndex += 1;
+  }
+  if(remainder > 0){
+    words.unshift(numberToIndianWords(remainder) + ` ${INDIAN_UNITS[INDIAN_UNITS.length - 1]}`);
+  }
+  return words.join(" ").trim();
+}
+function numberToIndianCurrencyWords(amount){
+  const numeric = Number(amount || 0);
+  if(!Number.isFinite(numeric)) return "Zero Rupees Only";
+  const isNegative = numeric < 0;
+  const absolute = Math.abs(numeric);
+  const paiseTotal = Math.round(absolute * 100);
+  const rupees = Math.floor(paiseTotal / 100);
+  const paise = paiseTotal % 100;
+  const rupeeWords = numberToIndianWords(rupees);
+  const parts = [];
+  if(rupees > 0){
+    parts.push(`${rupeeWords} ${rupees === 1 ? "Rupee" : "Rupees"}`);
+  }else{
+    parts.push("Zero Rupees");
+  }
+  if(paise > 0){
+    parts.push(`${numberToIndianWords(paise)} ${paise === 1 ? "Paisa" : "Paise"}`);
+  }
+  let phrase = parts.join(" and ");
+  if(isNegative) phrase = `Minus ${phrase}`;
+  return `${phrase} Only`;
+}
 function asNumber(v, f = 0) { const n = Number(v); return Number.isFinite(n) ? n : f; }
 
 function computeLine({ qty = 1, mrp = 0, rate, discountPct = 0, taxPct = 0 }) {
@@ -84,25 +185,65 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
     row.push(formatINR(r.net));
     return row;
   });
-  const columnStyles={0:{cellWidth:22},1:{cellWidth:(pageWidth-80)*0.42},2:{halign:"right",cellWidth:34},3:{halign:"right",cellWidth:70}};
+  const columnStyles={0:{cellWidth:22,halign:"center"},1:{cellWidth:(pageWidth-80)*0.42},2:{halign:"center",cellWidth:34},3:{halign:"center",cellWidth:70}};
   let colIndex=4;
-  if(includeDiscount){ columnStyles[colIndex]={halign:"right",cellWidth:44}; colIndex+=1; }
-  if(includeTax){ columnStyles[colIndex]={halign:"right",cellWidth:44}; colIndex+=1; }
+  if(includeDiscount){ columnStyles[colIndex]={halign:"center",cellWidth:44}; colIndex+=1; }
+  if(includeTax){ columnStyles[colIndex]={halign:"center",cellWidth:44}; colIndex+=1; }
   if(includeAmount){ columnStyles[colIndex]={halign:"right",cellWidth:80}; colIndex+=1; }
-  columnStyles[colIndex]={halign:"right",cellWidth:80};
+  columnStyles[colIndex]={halign:"center",cellWidth:80};
   autoTable(doc,{
     startY, head, body, styles:{ fontSize:9 }, headStyles:{ fillColor:[30,41,59] }, margin:{ left:40, right:40 },
     columnStyles
   });
 
   const y1 = doc.lastAutoTable?.finalY || startY+100;
-  const totalsRows=[["Taxable Amount", formatINR(totals.taxable)]];
-  if(includeDiscount) totalsRows.push(["Total Discount", formatINR(totals.discount)]);
-  totalsRows.push(["Total Tax", formatINR(totals.tax)],["Grand Total", formatINR(totals.net)]);
+  const amountInWords = numberToIndianCurrencyWords(totals.net);
+  const summaryRows=[
+    [
+      { content:"Total Quantity", styles:{ fontStyle:"bold", textColor:[30,41,59] } },
+      { content:formatQuantity(totals.qty ?? 0), styles:{ halign:"center", fontStyle:"bold", textColor:[30,41,59] } }
+    ],
+    [
+      { content:"Taxable Amount", styles:{ fontStyle:"bold", textColor:[30,41,59] } },
+      { content:formatINR(totals.taxable), styles:{ halign:"right", fontStyle:"bold", textColor:[15,23,42] } }
+    ]
+  ];
+  if(includeDiscount){
+    summaryRows.push([
+      { content:"Total Discount", styles:{ fontStyle:"bold", textColor:[30,41,59] } },
+      { content:formatINR(totals.discount), styles:{ halign:"right", fontStyle:"bold", textColor:[15,23,42] } }
+    ]);
+  }
+  summaryRows.push(
+    [
+      { content:"Total Tax", styles:{ fontStyle:"bold", textColor:[30,41,59] } },
+      { content:formatINR(totals.tax), styles:{ halign:"right", fontStyle:"bold", textColor:[15,23,42] } }
+    ],
+    [
+      { content:"Grand Total", styles:{ fontStyle:"bold", textColor:[15,23,42], fillColor:[226,232,240] } },
+      { content:formatINR(totals.net), styles:{ halign:"right", fontStyle:"bold", textColor:[14,165,233], fillColor:[226,232,240] } }
+    ]
+  );
   autoTable(doc,{
-    startY:y1+10, theme:"plain", margin:{ left:40, right:40 }, styles:{ fontSize:11, halign:"center" },
-    body: totalsRows.map(([k,v])=>[{content:k, styles:{ fontStyle:"bold" }},{content:v}]),
-    columnStyles:{0:{cellWidth:(pageWidth-80)*0.7},1:{cellWidth:(pageWidth-80)*0.3}}
+    startY:y1+12,
+    theme:"grid",
+    margin:{ left:40, right:40 },
+    styles:{ fontSize:11, cellPadding:{ top:8, bottom:8, left:12, right:12 }, lineWidth:0.4, lineColor:[148,163,184] },
+    head:[["Summary","Amount"]],
+    headStyles:{ fillColor:[30,41,59], textColor:255, halign:"center" },
+    body:summaryRows,
+    columnStyles:{0:{cellWidth:(pageWidth-80)*0.55,halign:"left"},1:{cellWidth:(pageWidth-80)*0.45,halign:"right"}}
+  });
+  autoTable(doc,{
+    startY:(doc.lastAutoTable?.finalY||y1+60)+6,
+    theme:"grid",
+    margin:{ left:40, right:40 },
+    styles:{ fontSize:10, cellPadding:{ top:10, bottom:10, left:12, right:12 }, lineWidth:0.4, lineColor:[148,163,184] },
+    body:[[
+      { content:"Amount in Words", styles:{ fontStyle:"bold", textColor:[30,41,59], fillColor:[241,245,249] } },
+      { content:amountInWords, styles:{ textColor:[15,23,42] } }
+    ]],
+    columnStyles:{0:{cellWidth:(pageWidth-80)*0.3,halign:"left"},1:{cellWidth:(pageWidth-80)*0.7,halign:"left"}}
   });
 
   autoTable(doc,{
@@ -218,7 +359,8 @@ export default function App(){
   }
   function removeLine(i){ setLines(p=>p.filter((_,idx)=>idx!==i)); }
 
-  const totals = useMemo(()=>lines.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0 }),[lines]);
+  const totals = useMemo(()=>lines.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; a.qty+=asNumber(it.qty||0,0); return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 }),[lines]);
+  const amountInWords = useMemo(()=>numberToIndianCurrencyWords(totals.net),[totals.net]);
   const autoDiscountColumn = useMemo(()=>totals.discount > 0.0001 || lines.some(it=>asNumber(it.discountPct||0)),[totals.discount,lines]);
   const pdfColumns = useMemo(()=>({
     discount: pdfColumnPrefs.discount ?? autoDiscountColumn,
@@ -271,7 +413,7 @@ export default function App(){
           };
         });
       const used = perItems.length?perItems:lines;
-      const totals=used.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0 });
+      const totals=used.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; a.qty+=asNumber(it.qty||0,0); return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 });
       const doc=renderInvoicePdf({ meta:cust, items:used, totals, columnOptions:pdfColumnPrefs });
       const blob=doc.output("blob");
       zip.file(`${invNo||"invoice"}.pdf`, blob);
@@ -400,7 +542,7 @@ export default function App(){
             <p style={{color:'#475569', fontSize:12, marginTop:16}}>Drag the order column handle to arrange invoice lines before exporting.</p>
             <div style={{overflow:'auto', marginTop:12}}>
               <table>
-                <thead><tr><th style={{width:72}}>Order ↕</th><th>Title</th><th>Qty</th><th>MRP</th><th>Rate</th><th>Disc%</th><th>Tax%</th><th>Amount</th><th>Net</th><th></th></tr></thead>
+                <thead><tr><th style={{width:72}}>Order ↕</th><th>Title</th><th style={{textAlign:'center'}}>Qty</th><th>MRP</th><th style={{textAlign:'center'}}>Rate</th><th>Disc%</th><th>Tax%</th><th>Amount</th><th style={{textAlign:'center'}}>Net</th><th></th></tr></thead>
                 <tbody>
                   {lines.map((l,i)=>{ const r=computeLine(l); const isActive = dragIndex===i; const isTarget = dragOverIndex===i && dragIndex!==null && dragIndex!==i; return (
                     <tr
@@ -427,20 +569,59 @@ export default function App(){
                         <div style={{fontWeight:600, color:'#0f172a'}}>{l.title}</div>
                         <div style={{fontSize:12, color:'#64748b'}}>{[l.author,l.publisher].filter(Boolean).join(' • ')}</div>
                       </td>
-                      <td><input className="input" value={l.qty} onChange={e=>updateLine(i,{qty:asNumber(e.target.value,1)})} /></td>
+                      <td style={{textAlign:'center'}}><input className="input" value={l.qty} onChange={e=>updateLine(i,{qty:asNumber(e.target.value,1)})} style={{textAlign:'center'}} /></td>
                       <td style={{textAlign:'right', fontWeight:500}}>{formatINR(l.mrp)}</td>
-                      <td><input className="input" value={l.rate} placeholder="(MRP)" onChange={e=>updateLine(i,{rate:e.target.value})} /></td>
+                      <td style={{textAlign:'center'}}><input className="input" value={l.rate} placeholder="(MRP)" onChange={e=>updateLine(i,{rate:e.target.value})} style={{textAlign:'center'}} /></td>
                       <td><input className="input" value={l.discountPct} onChange={e=>updateLine(i,{discountPct:asNumber(e.target.value,0)})} /></td>
                       <td><input className="input" value={l.taxPct} onChange={e=>updateLine(i,{taxPct:asNumber(e.target.value,0)})} /></td>
                       <td style={{textAlign:'right', fontWeight:500}}>{formatINR(r.amount)}</td>
-                      <td style={{textAlign:'right', fontWeight:600, color:'#0ea5e9'}}>{formatINR(r.net)}</td>
+                      <td style={{textAlign:'center', fontWeight:600, color:'#0ea5e9'}}>{formatINR(r.net)}</td>
                       <td><button className="btn gray" onClick={()=>removeLine(i)}>Remove</button></td>
                     </tr>
                   )})}
                   {!lines.length && <tr><td colSpan="10" style={{color:'#64748b', textAlign:'center'}}>No lines yet — go to Books tab and click “Add”.</td></tr>}
                 </tbody>
-                <tfoot><tr><td colSpan="7" style={{textAlign:'right', fontWeight:700}}>Totals</td><td style={{textAlign:'right'}}>{formatINR(totals.amount)}</td><td style={{textAlign:'right', color:'#0ea5e9', fontWeight:700}}>{formatINR(totals.net)}</td><td></td></tr></tfoot>
+                <tfoot>
+                  <tr>
+                    <td colSpan="2" style={{textAlign:'right', fontWeight:700}}>Totals</td>
+                    <td style={{textAlign:'center', fontWeight:700}}>{formatQuantity(totals.qty)}</td>
+                    <td colSpan="4"></td>
+                    <td style={{textAlign:'right'}}>{formatINR(totals.amount)}</td>
+                    <td style={{textAlign:'center', color:'#0ea5e9', fontWeight:700}}>{formatINR(totals.net)}</td>
+                    <td></td>
+                  </tr>
+                </tfoot>
               </table>
+            </div>
+            <div className="totals-panel">
+              <div className="totals-panel__grid">
+                <div className="totals-panel__item">
+                  <span className="totals-panel__label">Total Quantity</span>
+                  <span className="totals-panel__value">{formatQuantity(totals.qty)}</span>
+                </div>
+                <div className="totals-panel__item">
+                  <span className="totals-panel__label">Taxable Amount</span>
+                  <span className="totals-panel__value">{formatINR(totals.taxable)}</span>
+                </div>
+                {totals.discount > 0.0001 && (
+                  <div className="totals-panel__item">
+                    <span className="totals-panel__label">Total Discount</span>
+                    <span className="totals-panel__value">{formatINR(totals.discount)}</span>
+                  </div>
+                )}
+                <div className="totals-panel__item">
+                  <span className="totals-panel__label">Total Tax</span>
+                  <span className="totals-panel__value">{formatINR(totals.tax)}</span>
+                </div>
+                <div className="totals-panel__item totals-panel__highlight">
+                  <span className="totals-panel__label">Grand Total</span>
+                  <span className="totals-panel__value">{formatINR(totals.net)}</span>
+                </div>
+              </div>
+              <div className="totals-panel__words">
+                <span className="totals-panel__label">Amount in Words</span>
+                <p>{amountInWords}</p>
+              </div>
             </div>
           </div>
         )}
