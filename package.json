@@ -1,0 +1,24 @@
+{
+  "name": "bulk-invoice-generator-v2",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "papaparse": "^5.4.1",
+    "jszip": "^3.10.1",
+    "file-saver": "^2.0.5",
+    "jspdf": "^2.5.2",
+    "jspdf-autotable": "^3.8.0",
+    "dayjs": "^1.11.10"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}

@@ -1,0 +1,8 @@
+node_modules
+.DS_Store
+firebase-debug.log
+functions/node_modules
+web/node_modules
+web/dist
+.vscode
+.env
