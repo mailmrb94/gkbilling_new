@@ -115,6 +115,14 @@ export default function App(){
 
   const totals = useMemo(()=>lines.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0 }),[lines]);
 
+  const statEntries = useMemo(()=>[
+    { label:"Customers Loaded", value: customers.length },
+    { label:"Books Catalogued", value: catalog.length },
+    { label:"Visible Books", value: filteredBooks.length },
+    { label:"Invoice Lines", value: lines.length },
+    { label:"Current Invoice Net", value: formatINR(totals.net) }
+  ],[customers.length,catalog.length,filteredBooks.length,lines.length,totals.net]);
+
   async function onLoadCatalog(e){ const f=e.target.files?.[0]; if(!f) return; const rows=await parseCsv(f); const norm=rows.map(r=>({ sku:r.sku??r.SKU??"", title:r.title??r.Title??r.book_title??"", author:r.author??r.Author??"", publisher:r.publisher??r.Publisher??"", mrp:asNumber(r.mrp??r.MRP), default_discount_pct:asNumber(r.default_discount_pct??r.discount??0), default_tax_pct:asNumber(r.default_tax_pct??r.tax??r.gst??0) })); setCatalog(norm); }
   async function onLoadCustomers(e){ const f=e.target.files?.[0]; if(!f) return; const rows=await parseCsv(f); setCustomers(rows); }
   async function onLoadItems(e){ const f=e.target.files?.[0]; if(!f) return; const rows=await parseCsv(f); setBatchItems(rows); }
@@ -126,26 +134,46 @@ export default function App(){
   async function generateBatch(){ if(!customers.length){ alert("Load customers.csv first"); return; } const zip=new JSZip(); for(const cust of customers){ const invNo=cust.invoice_no; const perItems=(batchItems.length?batchItems:lines).filter(li=>batchItems.length?String(li.invoice_no)===String(invNo):true).map(li=>{ const match=catalog.find(b=>String(b.sku)===String(li.sku_or_title)||String(b.title).toLowerCase()===String(li.sku_or_title).toLowerCase()); const title=match?.title||li.sku_or_title||li.title||"Item"; return { title, author:match?.author||li.author||"", publisher:match?.publisher||li.publisher||"", qty:asNumber(li.qty||1), mrp:asNumber(li.mrp??match?.mrp??li.rate_override??0), rate:li.rate_override??"", discountPct:asNumber(li.discount_pct_override??match?.default_discount_pct??0), taxPct:asNumber(li.tax_pct_override??match?.default_tax_pct??0) }; }); const used = perItems.length?perItems:lines; const totals=used.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0 }); const doc=renderInvoicePdf({ meta:cust, items:used, totals }); const blob=doc.output("blob"); zip.file(`${invNo||"invoice"}.pdf`, blob); } const out=await zip.generateAsync({ type:"blob" }); saveAs(out, `invoices_${dayjs().format("YYYYMMDD_HHmm")}.zip`); }
 
   return (
-    <div className="min-h-screen" style={{padding:16}}>
-      <h1 className="text-2xl" style={{fontWeight:700}}>Bulk Invoice Generator – Garani Publication</h1>
-      <div style={{marginTop:10}}>
-        <button className={"tab "+(tab==='customers'?'active':'')} onClick={()=>setTab('customers')}>Customers</button>
-        <button className={"tab "+(tab==='books'?'active':'')} onClick={()=>setTab('books')}>Books</button>
-        <button className={"tab "+(tab==='invoice'?'active':'')} onClick={()=>setTab('invoice')}>Invoice</button>
+    <div className="app-shell">
+      <div className="hero">
+        <div className="hero-content">
+          <div className="hero-eyebrow">Garani Publication Toolkit</div>
+          <h1>Bulk Invoice Generator</h1>
+          <p>
+            Upload your catalog and customer rosters, fine-tune invoice lines, and export polished billing PDFs in a few vibrant clicks.
+          </p>
+          <div className="stats-grid">
+            {statEntries.map((stat,idx)=>(
+              <div key={idx} className="stat-card">
+                <strong>{stat.value}</strong>
+                <span>{stat.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
-      <div className="card" style={{marginTop:0, borderTopLeftRadius:0}}>
+      <div className="tab-bar" role="tablist">
+        <button className={"tab "+(tab==='customers'?'active':'')} onClick={()=>setTab('customers')} role="tab" aria-selected={tab==='customers'}>Customers</button>
+        <button className={"tab "+(tab==='books'?'active':'')} onClick={()=>setTab('books')} role="tab" aria-selected={tab==='books'}>Books</button>
+        <button className={"tab "+(tab==='invoice'?'active':'')} onClick={()=>setTab('invoice')} role="tab" aria-selected={tab==='invoice'}>Invoice</button>
+      </div>
+
+      <div className="card">
         {tab==='customers' && (
           <div>
-            <h2 className="text-xl" style={{fontWeight:600}}>Customers CSV</h2>
-            <p className="text-sm" style={{color:'#475569'}}>Load customers and then switch to Invoice tab to preview or batch-generate.</p>
+            <div className="section-header">
+              <h2>Customers CSV</h2>
+              <span className="pill">{customers.length ? `${customers.length} customers loaded` : 'Awaiting CSV upload'}</span>
+            </div>
+            <p style={{color:'#475569', marginTop:0}}>Load customers and then switch to Invoice tab to preview or batch-generate colourful PDFs.</p>
             <input type="file" accept=".csv" onChange={onLoadCustomers} />
-            <div style={{maxHeight:360, overflow:'auto', marginTop:10}}>
+            <div style={{maxHeight:360, overflow:'auto', marginTop:16}}>
               <table>
                 <thead><tr><th>Invoice No</th><th>Name</th><th>Billing</th><th>Shipping</th><th>GSTIN</th></tr></thead>
                 <tbody>
                   {customers.map((c,i)=>(<tr key={i}><td>{c.invoice_no}</td><td>{c.customer_name}</td><td>{c.billing_address}</td><td>{c.shipping_address}</td><td>{c.gstin||'-'}</td></tr>))}
-                  {!customers.length && <tr><td colSpan="5" style={{color:'#64748b'}}>No customers loaded</td></tr>}
+                  {!customers.length && <tr><td colSpan="5" style={{color:'#64748b', textAlign:'center'}}>No customers loaded</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -154,7 +182,10 @@ export default function App(){
 
         {tab==='books' && (
           <div>
-            <h2 className="text-xl" style={{fontWeight:600}}>Books Catalog</h2>
+            <div className="section-header">
+              <h2>Books Catalog</h2>
+              <span className="pill">{filteredBooks.length} matching titles</span>
+            </div>
             <input type="file" accept=".csv" onChange={onLoadCatalog} />
             <div style={{marginTop:8}}>
               <input className="input" placeholder="Search title/author/publisher" value={filter} onChange={e=>setFilter(e.target.value)} />
@@ -162,12 +193,12 @@ export default function App(){
                 <button className="btn gray" onClick={()=>addAllBooks(filteredBooks)}>Add All Filtered</button>
               </div>
             </div>
-            <div style={{maxHeight:360, overflow:'auto', marginTop:10}}>
+            <div style={{maxHeight:360, overflow:'auto', marginTop:16}}>
               <table>
                 <thead><tr><th>SKU</th><th>Title</th><th>Author</th><th>Publisher</th><th>MRP</th><th>Default Disc%</th><th>Add</th></tr></thead>
                 <tbody>
-                  {filteredBooks.map((b,i)=>(<tr key={i}><td>{b.sku}</td><td>{b.title}</td><td>{b.author}</td><td>{b.publisher}</td><td>{formatINR(b.mrp)}</td><td>{b.default_discount_pct||0}</td><td><button className="btn gray" onClick={()=>addLine(b)}>Add</button></td></tr>))}
-                  {!filteredBooks.length && <tr><td colSpan="7" style={{color:'#64748b'}}>No books loaded</td></tr>}
+                  {filteredBooks.map((b,i)=>(<tr key={i}><td>{b.sku}</td><td>{b.title}</td><td>{b.author}</td><td>{b.publisher}</td><td>{formatINR(b.mrp)}</td><td>{b.default_discount_pct||0}</td><td><button className="btn sky" onClick={()=>addLine(b)}>Add</button></td></tr>))}
+                  {!filteredBooks.length && <tr><td colSpan="7" style={{color:'#64748b', textAlign:'center'}}>No books match your search yet</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -176,42 +207,48 @@ export default function App(){
 
         {tab==='invoice' && (
           <div>
-            <h2 className="text-xl" style={{fontWeight:600}}>Invoice Builder</h2>
-            <div style={{display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12}}>
+            <div className="section-header">
+              <h2>Invoice Builder</h2>
+              <span className="pill">{lines.length ? `${lines.length} line items ready` : 'Add titles from the catalog'}</span>
+            </div>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))', gap:16}}>
               <div>
-                <label>Pick Customer by invoice_no</label>
+                <label>Pick customer by invoice no.</label>
                 <input className="input" placeholder="Type invoice_no" onChange={(e)=>pickCustomer(e.target.value)} />
-                <button className="btn dark" style={{marginTop:8, width:'100%'}} onClick={generateSingle}>Generate Single PDF</button>
+                <button className="btn dark" style={{marginTop:12, width:'100%'}} onClick={generateSingle}>Generate Single PDF</button>
               </div>
               <div>
-                <label>Optional Line Items CSV (for batch)</label>
+                <label>Optional line items CSV (for batch)</label>
                 <input type="file" accept=".csv" onChange={onLoadItems} />
               </div>
               <div>
-                <label>Batch Output</label>
-                <button className="btn green" style={{display:'block', width:'100%'}} onClick={generateBatch}>Generate ZIP of PDFs</button>
+                <label>Batch output</label>
+                <button className="btn green" style={{display:'block', width:'100%', marginTop:12}} onClick={generateBatch}>Generate ZIP of PDFs</button>
               </div>
             </div>
-            <div style={{overflow:'auto', marginTop:12}}>
+            <div style={{overflow:'auto', marginTop:20}}>
               <table>
                 <thead><tr><th>Title</th><th>Qty</th><th>MRP</th><th>Rate</th><th>Disc%</th><th>Tax%</th><th>Amount</th><th>Net</th><th></th></tr></thead>
                 <tbody>
                   {lines.map((l,i)=>{ const r=computeLine(l); return (
                     <tr key={i}>
-                      <td><div style={{fontWeight:600}}>{l.title}</div><div style={{fontSize:12, color:'#64748b'}}>{[l.author,l.publisher].filter(Boolean).join(' • ')}</div></td>
+                      <td>
+                        <div style={{fontWeight:600, color:'#0f172a'}}>{l.title}</div>
+                        <div style={{fontSize:12, color:'#64748b'}}>{[l.author,l.publisher].filter(Boolean).join(' • ')}</div>
+                      </td>
                       <td><input className="input" value={l.qty} onChange={e=>updateLine(i,{qty:asNumber(e.target.value,1)})} /></td>
-                      <td style={{textAlign:'right'}}>{formatINR(l.mrp)}</td>
+                      <td style={{textAlign:'right', fontWeight:500}}>{formatINR(l.mrp)}</td>
                       <td><input className="input" value={l.rate} placeholder="(MRP)" onChange={e=>updateLine(i,{rate:e.target.value})} /></td>
                       <td><input className="input" value={l.discountPct} onChange={e=>updateLine(i,{discountPct:asNumber(e.target.value,0)})} /></td>
                       <td><input className="input" value={l.taxPct} onChange={e=>updateLine(i,{taxPct:asNumber(e.target.value,0)})} /></td>
-                      <td style={{textAlign:'right'}}>{formatINR(r.amount)}</td>
-                      <td style={{textAlign:'right'}}>{formatINR(r.net)}</td>
+                      <td style={{textAlign:'right', fontWeight:500}}>{formatINR(r.amount)}</td>
+                      <td style={{textAlign:'right', fontWeight:600, color:'#0ea5e9'}}>{formatINR(r.net)}</td>
                       <td><button className="btn gray" onClick={()=>removeLine(i)}>Remove</button></td>
                     </tr>
                   )})}
-                  {!lines.length && <tr><td colSpan="9" style={{color:'#64748b'}}>No lines yet — go to Books tab and click “Add”.</td></tr>}
+                  {!lines.length && <tr><td colSpan="9" style={{color:'#64748b', textAlign:'center'}}>No lines yet — go to Books tab and click “Add”.</td></tr>}
                 </tbody>
-                <tfoot><tr><td colSpan="6" style={{textAlign:'right', fontWeight:700}}>Totals</td><td style={{textAlign:'right'}}>{formatINR(totals.amount)}</td><td style={{textAlign:'right'}}>{formatINR(totals.net)}</td><td></td></tr></tfoot>
+                <tfoot><tr><td colSpan="6" style={{textAlign:'right', fontWeight:700}}>Totals</td><td style={{textAlign:'right'}}>{formatINR(totals.amount)}</td><td style={{textAlign:'right', color:'#0ea5e9', fontWeight:700}}>{formatINR(totals.net)}</td><td></td></tr></tfoot>
               </table>
             </div>
           </div>
