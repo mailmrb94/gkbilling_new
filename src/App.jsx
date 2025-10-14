@@ -643,6 +643,7 @@ export default function App(){
   const [customers,setCustomers]=usePersistentState("data.customers", []);
   const [batchItems,setBatchItems]=usePersistentState("data.batchItems", []);
   const [lines,setLines]=usePersistentState("data.lines", []);
+  const [editingLineIndex,setEditingLineIndex] = useState(null);
   const [savedInvoices,setSavedInvoices]=usePersistentState("data.savedInvoices", []);
   const [defaultTaxPct,setDefaultTaxPct]=usePersistentState("settings.defaultTaxPct", 18);
   const [pdfColumnPrefs,setPdfColumnPrefs]=usePersistentState("settings.pdfColumnPrefs", () => ({}));
@@ -859,6 +860,13 @@ export default function App(){
       next.splice(to,0,moved);
       return next;
     });
+    setEditingLineIndex(prev=>{
+      if(prev===null) return prev;
+      if(prev===from) return to;
+      if(from<prev && prev<=to) return prev-1;
+      if(to<=prev && prev<from) return prev+1;
+      return prev;
+    });
   }
   function handleDragStart(index){
     dragIndexRef.current=index;
@@ -891,7 +899,15 @@ export default function App(){
     handleDragEnd();
     reorderLines(from,target);
   }
-  function removeLine(i){ setLines(p=>p.filter((_,idx)=>idx!==i)); }
+  function removeLine(i){
+    setLines(p=>p.filter((_,idx)=>idx!==i));
+    setEditingLineIndex(prev=>{
+      if(prev===null) return prev;
+      if(prev===i) return null;
+      if(prev>i) return prev-1;
+      return prev;
+    });
+  }
 
   const totals = useMemo(()=>lines.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; a.qty+=asNumber(it.qty||0,0); return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 }),[lines]);
   const amountInWords = useMemo(()=>numberToIndianCurrencyWords(totals.net),[totals.net]);
@@ -1281,7 +1297,7 @@ export default function App(){
               <table>
                 <thead><tr><th style={{width:72}}>Order ↕</th><th>Title</th><th style={{textAlign:'center'}}>Qty</th><th>MRP</th><th style={{textAlign:'center'}}>Rate</th><th>Disc%</th><th>Tax%</th><th>Amount</th><th style={{textAlign:'center'}}>Net</th><th></th></tr></thead>
                 <tbody>
-                  {lines.map((l,i)=>{ const r=computeLine(l); const isActive = dragIndex===i; const isTarget = dragOverIndex===i && dragIndex!==null && dragIndex!==i; return (
+                  {lines.map((l,i)=>{ const r=computeLine(l); const isActive = dragIndex===i; const isTarget = dragOverIndex===i && dragIndex!==null && dragIndex!==i; const isEditingLine = editingLineIndex===i; return (
                     <tr
                       key={i}
                       draggable={lines.length>1}
@@ -1291,9 +1307,10 @@ export default function App(){
                       onDragEnd={handleDragEnd}
                       onDrop={e=>{ e.preventDefault(); e.stopPropagation(); const after=dragIndexRef.current!==null && dragIndexRef.current < i; handleDrop(i,{ after }); }}
                       style={{
-                        backgroundColor: isTarget ? '#e0f2fe' : undefined,
+                        backgroundColor: isEditingLine ? '#e0f2fe' : isTarget ? '#e0f2fe' : undefined,
                         opacity: isActive ? 0.6 : 1,
-                        cursor: lines.length>1 ? 'move' : 'default'
+                        cursor: lines.length>1 ? 'move' : 'default',
+                        boxShadow: isEditingLine ? 'inset 0 0 0 2px rgba(14,165,233,0.45)' : undefined
                       }}
                     >
                       <td style={{textAlign:'center', fontWeight:600, color:'#334155'}}>
@@ -1304,29 +1321,46 @@ export default function App(){
                       </td>
                       <td>
                         <div className="invoice-line__details">
-                          <input
-                            className="input invoice-line__title-input"
-                            value={l.title || ""}
-                            onChange={e=>updateLine(i,{title:e.target.value})}
-                            placeholder="Book title"
-                            aria-label="Book title"
-                          />
-                          <div className="invoice-line__meta">
-                            <input
-                              className="input invoice-line__meta-input"
-                              value={l.author || ""}
-                              onChange={e=>updateLine(i,{author:e.target.value})}
-                              placeholder="Author"
-                              aria-label="Book author"
-                            />
-                            <input
-                              className="input invoice-line__meta-input"
-                              value={l.publisher || ""}
-                              onChange={e=>updateLine(i,{publisher:e.target.value})}
-                              placeholder="Publisher"
-                              aria-label="Book publisher"
-                            />
-                          </div>
+                          {isEditingLine ? (
+                            <>
+                              <input
+                                className="input invoice-line__title-input"
+                                value={l.title || ""}
+                                onChange={e=>updateLine(i,{title:e.target.value})}
+                                placeholder="Book title"
+                                aria-label="Book title"
+                              />
+                              <div className="invoice-line__meta">
+                                <input
+                                  className="input invoice-line__meta-input"
+                                  value={l.author || ""}
+                                  onChange={e=>updateLine(i,{author:e.target.value})}
+                                  placeholder="Author"
+                                  aria-label="Book author"
+                                />
+                                <input
+                                  className="input invoice-line__meta-input"
+                                  value={l.publisher || ""}
+                                  onChange={e=>updateLine(i,{publisher:e.target.value})}
+                                  placeholder="Publisher"
+                                  aria-label="Book publisher"
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="invoice-line__title-display">
+                                {l.title ? l.title : <span className="invoice-line__placeholder">Untitled book</span>}
+                              </div>
+                              <div className="invoice-line__meta-display">
+                                {l.author && <span>{l.author}</span>}
+                                {l.publisher && <span>{l.publisher}</span>}
+                                {!l.author && !l.publisher && (
+                                  <span className="invoice-line__placeholder">No author or publisher</span>
+                                )}
+                              </div>
+                            </>
+                          )}
                         </div>
                       </td>
                       <td style={{textAlign:'center'}}><input className="input" value={l.qty} onChange={e=>updateLine(i,{qty:asNumber(e.target.value,1)})} style={{textAlign:'center'}} /></td>
@@ -1336,7 +1370,16 @@ export default function App(){
                       <td><input className="input" value={l.taxPct} onChange={e=>updateLine(i,{taxPct:asNumber(e.target.value,0)})} /></td>
                       <td style={{textAlign:'right', fontWeight:500}}>{formatINR(r.amount)}</td>
                       <td style={{textAlign:'center', fontWeight:600, color:'#0ea5e9'}}>{formatINR(r.net)}</td>
-                      <td><button className="btn gray" onClick={()=>removeLine(i)}>Remove</button></td>
+                      <td>
+                        <div className="invoice-line__actions">
+                          {isEditingLine ? (
+                            <button className="btn sky" onClick={()=>setEditingLineIndex(null)}>Done</button>
+                          ) : (
+                            <button className="btn gray" onClick={()=>setEditingLineIndex(i)}>Edit</button>
+                          )}
+                          <button className="btn gray" onClick={()=>removeLine(i)}>Remove</button>
+                        </div>
+                      </td>
                     </tr>
                   )})}
                   {!lines.length && <tr><td colSpan="10" style={{color:'#64748b', textAlign:'center'}}>No lines yet — go to Books tab and click “Add”.</td></tr>}
