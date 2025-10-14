@@ -529,33 +529,27 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   if(includeTax){ columnStyles[colIndex]={halign:"center",cellWidth:44}; colIndex+=1; }
   if(includeAmount){ columnStyles[colIndex]={halign:"right",cellWidth:80}; colIndex+=1; }
   columnStyles[colIndex]={halign:"right",cellWidth:90};
-  const totalCell = (content, styles={}) => ({
-    content,
-    styles:{
-      fontStyle:"bold",
-      textColor:[30,41,59],
-      fillColor:[241,245,249],
-      halign:"right",
-      cellPadding:{ top:8, bottom:8, left:8, right:8 },
-      lineColor:[148,163,184],
-      lineWidth:0.4,
-      ...styles
-    }
+  const totalStyles = (halign) => ({
+    fontStyle:"bold",
+    textColor:[0,0,0],
+    halign
   });
   const totalsRow = [
-    totalCell("",{ halign:"center" }),
-    totalCell("Totals",{ halign:"left" }),
-    totalCell(formatQuantity(totals.qty ?? 0),{ halign:"center" }),
-    totalCell(includeAmount ? "" : formatINR(totals.taxable))
+    { content:"", styles: totalStyles("center") },
+    { content:"Totals", styles: totalStyles("left") },
+    { content:formatQuantity(totals.qty ?? 0), styles: totalStyles("center") },
+    { content:includeAmount ? "" : formatINR(totals.taxable), styles: totalStyles("right") }
   ];
-  if(includeDiscount){ totalsRow.push(totalCell("")); }
-  if(includeTax){ totalsRow.push(totalCell(formatINR(totals.tax))); }
-  if(includeAmount){ totalsRow.push(totalCell(formatINR(totals.taxable))); }
-  totalsRow.push(totalCell(formatINR(totals.net),{ textColor:[14,165,233], fillColor:[224,242,254] }));
+  if(includeDiscount){ totalsRow.push({ content:"", styles: totalStyles("right") }); }
+  if(includeTax){ totalsRow.push({ content:formatINR(totals.tax), styles: totalStyles("right") }); }
+  if(includeAmount){ totalsRow.push({ content:formatINR(totals.taxable), styles: totalStyles("right") }); }
+  totalsRow.push({ content:formatINR(totals.net), styles: totalStyles("right") });
+  if(body.length){
+    body.push(totalsRow);
+  }
   autoTable(doc,{
-    startY, head, body, foot:[totalsRow], styles:{ fontSize:9 }, headStyles:{ fillColor:[30,41,59] },
-    margin:{ left:40, right:40 }, columnStyles,
-    footStyles:{ fontStyle:"bold", textColor:[30,41,59], fillColor:[241,245,249], halign:"right" }
+    startY, head, body, styles:{ fontSize:9 }, headStyles:{ fillColor:[30,41,59] },
+    margin:{ left:40, right:40 }, columnStyles
   });
 
   const y1 = doc.lastAutoTable?.finalY || startY+100;
