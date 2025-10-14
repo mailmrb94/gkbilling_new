@@ -529,20 +529,33 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   if(includeTax){ columnStyles[colIndex]={halign:"center",cellWidth:44}; colIndex+=1; }
   if(includeAmount){ columnStyles[colIndex]={halign:"right",cellWidth:80}; colIndex+=1; }
   columnStyles[colIndex]={halign:"right",cellWidth:90};
+  const totalCell = (content, styles={}) => ({
+    content,
+    styles:{
+      fontStyle:"bold",
+      textColor:[30,41,59],
+      fillColor:[241,245,249],
+      halign:"right",
+      cellPadding:{ top:8, bottom:8, left:8, right:8 },
+      lineColor:[148,163,184],
+      lineWidth:0.4,
+      ...styles
+    }
+  });
   const totalsRow = [
-    { content:"", styles:{ fontStyle:"bold", halign:"center", textColor:[0,0,0] } },
-    { content:"Totals", styles:{ fontStyle:"bold", halign:"left", textColor:[0,0,0] } },
-    { content:formatQuantity(totals.qty ?? 0), styles:{ fontStyle:"bold", halign:"center", textColor:[0,0,0] } },
-    { content:includeAmount ? "" : formatINR(totals.taxable), styles:{ fontStyle:"bold", halign:"right", textColor:[0,0,0] } }
+    totalCell("",{ halign:"center" }),
+    totalCell("Totals",{ halign:"left" }),
+    totalCell(formatQuantity(totals.qty ?? 0),{ halign:"center" }),
+    totalCell(includeAmount ? "" : formatINR(totals.taxable))
   ];
-  if(includeDiscount){ totalsRow.push({ content:"", styles:{ fontStyle:"bold", halign:"center", textColor:[0,0,0] } }); }
-  if(includeTax){ totalsRow.push({ content:formatINR(totals.tax), styles:{ fontStyle:"bold", halign:"right", textColor:[0,0,0] } }); }
-  if(includeAmount){ totalsRow.push({ content:formatINR(totals.taxable), styles:{ fontStyle:"bold", halign:"right", textColor:[0,0,0] } }); }
-  totalsRow.push({ content:formatINR(totals.net), styles:{ fontStyle:"bold", halign:"right", textColor:[0,0,0] } });
-  const tableBody = body.length ? [...body, totalsRow] : [totalsRow];
+  if(includeDiscount){ totalsRow.push(totalCell("")); }
+  if(includeTax){ totalsRow.push(totalCell(formatINR(totals.tax))); }
+  if(includeAmount){ totalsRow.push(totalCell(formatINR(totals.taxable))); }
+  totalsRow.push(totalCell(formatINR(totals.net),{ textColor:[14,165,233], fillColor:[224,242,254] }));
   autoTable(doc,{
-    startY, head, body:tableBody, styles:{ fontSize:9 }, headStyles:{ fillColor:[30,41,59] },
-    margin:{ left:40, right:40 }, columnStyles
+    startY, head, body, foot:[totalsRow], styles:{ fontSize:9 }, headStyles:{ fillColor:[30,41,59] },
+    margin:{ left:40, right:40 }, columnStyles,
+    footStyles:{ fontStyle:"bold", textColor:[30,41,59], fillColor:[241,245,249], halign:"right" }
   });
 
   const y1 = doc.lastAutoTable?.finalY || startY+100;
