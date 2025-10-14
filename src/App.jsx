@@ -1161,8 +1161,31 @@ export default function App(){
                         </div>
                       </td>
                       <td>
-                        <div style={{fontWeight:600, color:'#0f172a'}}>{l.title}</div>
-                        <div style={{fontSize:12, color:'#64748b'}}>{[l.author,l.publisher].filter(Boolean).join(' • ')}</div>
+                        <div className="invoice-line__details">
+                          <input
+                            className="input invoice-line__title-input"
+                            value={l.title || ""}
+                            onChange={e=>updateLine(i,{title:e.target.value})}
+                            placeholder="Book title"
+                            aria-label="Book title"
+                          />
+                          <div className="invoice-line__meta">
+                            <input
+                              className="input invoice-line__meta-input"
+                              value={l.author || ""}
+                              onChange={e=>updateLine(i,{author:e.target.value})}
+                              placeholder="Author"
+                              aria-label="Book author"
+                            />
+                            <input
+                              className="input invoice-line__meta-input"
+                              value={l.publisher || ""}
+                              onChange={e=>updateLine(i,{publisher:e.target.value})}
+                              placeholder="Publisher"
+                              aria-label="Book publisher"
+                            />
+                          </div>
+                        </div>
                       </td>
                       <td style={{textAlign:'center'}}><input className="input" value={l.qty} onChange={e=>updateLine(i,{qty:asNumber(e.target.value,1)})} style={{textAlign:'center'}} /></td>
                       <td style={{textAlign:'right', fontWeight:500}}>{formatINR(l.mrp)}</td>
