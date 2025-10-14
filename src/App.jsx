@@ -542,45 +542,39 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
       value:formatQuantity(totals.qty ?? 0),
       align:"center",
       fill:[241,245,249],
-      valueColor:[30,41,59]
+      valueColor:[30,41,59],
+      fontSize:14
     },
     {
       label:"Taxable Amount",
       value:formatINR(totals.taxable),
       align:"right",
       fill:[241,245,249],
-      valueColor:[15,23,42]
-    }
-  ];
-  if(includeDiscount){
-    summaryEntries.push({
-      label:"Total Discount",
-      value:formatINR(totals.discount),
-      align:"right",
-      fill:[241,245,249],
-      valueColor:[15,23,42]
-    });
-  }
-  summaryEntries.push(
+      valueColor:[15,23,42],
+      fontSize:14
+    },
     {
-      label:"Total Tax",
+      label:"Tax",
       value:formatINR(totals.tax),
       align:"right",
       fill:[241,245,249],
-      valueColor:[15,23,42]
+      valueColor:[15,23,42],
+      fontSize:14
     },
     {
-      label:"Grand Total",
+      label:"Total Amount",
       value:formatINR(totals.net),
       align:"right",
       fill:[224,242,254],
-      valueColor:[14,165,233]
+      valueColor:[14,165,233],
+      fontSize:16
     }
-  );
+  ];
   const summaryY = y1 + 18;
   doc.setFont("helvetica","bold");
   doc.setFontSize(12);
-  doc.text("Summary", 40, summaryY);
+  const summaryTitle = meta.invoice_no ? `Summary · Invoice ${meta.invoice_no}` : "Summary";
+  doc.text(summaryTitle, 40, summaryY);
   const summaryLabelRow = summaryEntries.map(entry=>({
     content:entry.label,
     styles:{
@@ -597,7 +591,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
     styles:{
       halign:entry.align||"center",
       fontStyle:"bold",
-      fontSize:12,
+      fontSize:entry.fontSize||12,
       textColor:entry.valueColor,
       fillColor:entry.fill,
       cellPadding:{ top:12, bottom:12, left:12, right:12 },
