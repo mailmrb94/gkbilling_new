@@ -7,6 +7,11 @@ import autoTable from "jspdf-autotable";
 import dayjs from "dayjs";
 import { useSupabaseSync } from "./useSupabaseSync";
 import { persistInvoiceRecord } from "./supabasePersistence";
+import {
+  isSupabaseConfigured,
+  supabaseUrlError,
+  supabaseWorkspaceId,
+} from "./supabaseClient";
 
 const saveAs = FileSaver.saveAs || FileSaver.default;
 
@@ -136,6 +141,32 @@ function numberToIndianCurrencyWords(amount){
   let phrase = parts.join(" and ");
   if(isNegative) phrase = `Minus ${phrase}`;
   return `${phrase} Only`;
+}
+
+const BOOK_ORDER_BY = Object.freeze({ column:"title", ascending:true });
+const CUSTOMER_ORDER_BY = Object.freeze({ column:"invoice_no", ascending:true });
+const DRAFT_ORDER_BY = Object.freeze({ column:"updated_at", ascending:false });
+
+function bookIdentity(book){
+  if(!book) return null;
+  return book.uid || buildBookUid({ sku:book.sku, title:book.title });
+}
+
+function customerIdentity(customer){
+  if(!customer) return null;
+  return (
+    customer.uid ||
+    buildCustomerUid(
+      customer.invoice_no,
+      customer.customer_name,
+      customer.gstin
+    )
+  );
+}
+
+function draftIdentity(draft){
+  if(!draft) return null;
+  return draft.id || draft.uid || null;
 }
 function asNumber(v, f = 0) { const n = Number(v); return Number.isFinite(n) ? n : f; }
 
@@ -402,6 +433,48 @@ function SyncStatusPill({ status, fallback }){
   );
 }
 
+function SupabaseNotice({ notice, onRetry }){
+  if(!notice) return null;
+  const palette = {
+    info:{ background:"rgba(226,232,240,0.6)", border:"rgba(148,163,184,0.45)", color:"#0f172a" },
+    warning:{ background:"rgba(253,230,138,0.55)", border:"rgba(217,119,6,0.45)", color:"#92400e" },
+    error:{ background:"rgba(248,113,113,0.35)", border:"rgba(239,68,68,0.45)", color:"#b91c1c" },
+    loading:{ background:"rgba(125,211,252,0.45)", border:"rgba(14,165,233,0.45)", color:"#0c4a6e" },
+    success:{ background:"rgba(134,239,172,0.45)", border:"rgba(34,197,94,0.45)", color:"#166534" }
+  };
+  const tone = palette[notice.tone] || palette.info;
+  return (
+    <div
+      style={{
+        marginTop:16,
+        padding:"12px 16px",
+        borderRadius:12,
+        border:`1px solid ${tone.border}`,
+        background:tone.background,
+        color:tone.color,
+        display:"flex",
+        alignItems:"center",
+        justifyContent:"space-between",
+        gap:12,
+        flexWrap:"wrap"
+      }}
+      role={notice.tone === "error" ? "alert" : undefined}
+    >
+      <span style={{flex:"1 1 auto", minWidth:200}}>{notice.message}</span>
+      {notice.canRetry && onRetry && (
+        <button
+          className="btn gray"
+          type="button"
+          onClick={onRetry}
+          style={{ padding:"6px 12px", fontSize:13 }}
+        >
+          Retry sync
+        </button>
+      )}
+    </div>
+  );
+}
+
 function computeLine({ qty = 1, mrp = 0, rate, discountPct = 0, taxPct = 0 }) {
   const appliedRate = rate !== undefined && rate !== null && `${rate}` !== "" ? asNumber(rate) : asNumber(mrp);
   const amount = asNumber(qty) * appliedRate;
@@ -625,34 +698,99 @@ export default function App(){
     table:"books",
     state:catalog,
     setState:setCatalog,
-    identity:(book)=>book?.uid || buildBookUid({ sku:book?.sku, title:book?.title }),
+    identity:bookIdentity,
     fromRow:fromSupabaseBook,
     toRow:toSupabaseBook,
     conflictTarget:"workspace_id,uid",
-    orderBy:{ column:"title", ascending:true }
+    orderBy:BOOK_ORDER_BY
   });
 
   const customerSyncStatus = useSupabaseSync({
     table:"customers",
     state:customers,
     setState:setCustomers,
-    identity:(customer)=>customer?.uid || buildCustomerUid(customer?.invoice_no, customer?.customer_name, customer?.gstin),
+    identity:customerIdentity,
     fromRow:fromSupabaseCustomer,
     toRow:toSupabaseCustomer,
     conflictTarget:"workspace_id,uid",
-    orderBy:{ column:"invoice_no", ascending:true }
+    orderBy:CUSTOMER_ORDER_BY
   });
 
   const draftSyncStatus = useSupabaseSync({
     table:"draft_invoices",
     state:savedInvoices,
     setState:setSavedInvoices,
-    identity:(draft)=>draft?.id || draft?.uid,
+    identity:draftIdentity,
     fromRow:fromSupabaseDraft,
     toRow:toSupabaseDraft,
     conflictTarget:"workspace_id,uid",
-    orderBy:{ column:"updated_at", ascending:false }
+    orderBy:DRAFT_ORDER_BY
   });
+
+  const { refresh:refreshBooks } = bookSyncStatus;
+  const { refresh:refreshCustomers } = customerSyncStatus;
+  const { refresh:refreshDrafts } = draftSyncStatus;
+
+  const retrySupabaseSync = React.useCallback(()=>{
+    const retryFns = [refreshBooks, refreshCustomers, refreshDrafts];
+    retryFns.forEach((fn)=>{
+      if(typeof fn === "function"){
+        try{
+          fn();
+        }catch(error){
+          console.error("Supabase retry failed", error);
+        }
+      }
+    });
+  },[refreshBooks,refreshCustomers,refreshDrafts]);
+
+  const supabaseStatuses=[bookSyncStatus,customerSyncStatus,draftSyncStatus];
+  const availableStatuses=supabaseStatuses.filter(status=>status?.available);
+  const errorStatus=availableStatuses.find(status=>status?.error);
+  const loadingStatus=availableStatuses.find(status=>status?.loading);
+  const syncingStatus=availableStatuses.find(status=>status?.syncing);
+
+  let supabaseNotice=null;
+  if(!isSupabaseConfigured || !availableStatuses.length){
+    if(supabaseUrlError){
+      supabaseNotice={
+        tone:"warning",
+        message:supabaseUrlError,
+        canRetry:false
+      };
+    }else{
+      supabaseNotice={
+        tone:"info",
+        message:
+          "Cloud sync is currently disabled. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable Supabase backups.",
+        canRetry:false
+      };
+    }
+  }else if(errorStatus){
+    supabaseNotice={
+      tone:"error",
+      message:`Supabase request failed: ${errorStatus.error}`,
+      canRetry:true
+    };
+  }else if(loadingStatus){
+    supabaseNotice={
+      tone:"loading",
+      message:"Connecting to Supabase…",
+      canRetry:false
+    };
+  }else if(syncingStatus){
+    supabaseNotice={
+      tone:"loading",
+      message:"Syncing changes with Supabase…",
+      canRetry:false
+    };
+  }else{
+    supabaseNotice={
+      tone:"success",
+      message:`Supabase connection established for workspace “${supabaseWorkspaceId}”. Tables start empty until you add data.`,
+      canRetry:false
+    };
+  }
 
   useEffect(()=>{
     if(!isBookModalOpen) return;
@@ -984,6 +1122,10 @@ export default function App(){
               </div>
             ))}
           </div>
+          <SupabaseNotice
+            notice={supabaseNotice}
+            onRetry={supabaseNotice?.canRetry ? retrySupabaseSync : undefined}
+          />
         </div>
       </div>
 
