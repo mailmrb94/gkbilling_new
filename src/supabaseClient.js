@@ -1,15 +1,55 @@
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, "") || "";
+function normalizeSupabaseUrl(rawUrl) {
+  const trimmed = (rawUrl || "").trim();
+  if (!trimmed) return { url: "", isValid: false };
+
+  let normalized = trimmed;
+  if (!/^https?:\/\//i.test(normalized)) {
+    normalized = `https://${normalized}`;
+  }
+
+  try {
+    const url = new URL(normalized);
+    const suffixes = ["supabase.co", "supabase.in", "supabase.net"];
+    const lowerHost = url.hostname.toLowerCase();
+    for (const suffix of suffixes) {
+      if (lowerHost.endsWith(suffix) && !lowerHost.endsWith(`.${suffix}`)) {
+        const prefix = url.hostname.slice(0, url.hostname.length - suffix.length);
+        const trimmedPrefix = prefix.replace(/\.$/, "");
+        const finalHost = trimmedPrefix ? `${trimmedPrefix}.${suffix}` : suffix;
+        url.hostname = finalHost;
+        break;
+      }
+    }
+    return { url: url.origin.replace(/\/$/, ""), isValid: true };
+  } catch (error) {
+    return { url: normalized.replace(/\/$/, ""), isValid: false };
+  }
+}
+
+const { url: supabaseUrl, isValid: isSupabaseUrlValid } = normalizeSupabaseUrl(
+  import.meta.env.VITE_SUPABASE_URL,
+);
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 const workspaceId = import.meta.env.VITE_SUPABASE_WORKSPACE || "default";
 
 const restBaseUrl = supabaseUrl ? `${supabaseUrl}/rest/v1` : "";
 
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+export const isSupabaseConfigured = Boolean(isSupabaseUrlValid && supabaseAnonKey);
+export const supabaseUrlError = isSupabaseUrlValid
+  ? null
+  : import.meta.env.VITE_SUPABASE_URL
+    ? "VITE_SUPABASE_URL must be the Supabase Project URL, e.g. https://xyzcompany.supabase.co"
+    : null;
 export const supabaseWorkspaceId = workspaceId;
 
 function ensureConfigured() {
-  if (!isSupabaseConfigured) {
-    throw new Error("Supabase environment variables are not configured");
+  if (!supabaseAnonKey) {
+    throw new Error("Missing VITE_SUPABASE_ANON_KEY environment variable");
+  }
+  if (!isSupabaseUrlValid) {
+    throw new Error(
+      supabaseUrlError || "VITE_SUPABASE_URL is not a valid Supabase Project URL",
+    );
   }
 }
 

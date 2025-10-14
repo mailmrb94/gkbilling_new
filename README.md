@@ -54,6 +54,9 @@ VITE_SUPABASE_ANON_KEY="<anon key>"
 VITE_SUPABASE_WORKSPACE="garani-publication" # any partitioning label you prefer
 ```
 
+- **Tip:** Copy the exact **Project URL** from the Supabase dashboard. It should look like
+  `https://your-project-ref.supabase.co` (note the dot before `supabase.co`).
+
 The optional `VITE_SUPABASE_WORKSPACE` lets you isolate data per business unit or environment. Every row the app writes includes this `workspace_id` so you can enforce row-level security policies in Supabase.
 
 ### Recommended schema

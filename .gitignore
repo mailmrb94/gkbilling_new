@@ -4,5 +4,6 @@ firebase-debug.log
 functions/node_modules
 web/node_modules
 web/dist
+dist
 .vscode
 .env
