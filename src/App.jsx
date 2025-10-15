@@ -170,6 +170,72 @@ function draftIdentity(draft){
 }
 function asNumber(v, f = 0) { const n = Number(v); return Number.isFinite(n) ? n : f; }
 
+function parseOrderValue(value){
+  if(value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizeInvoiceLines(lines){
+  if(!Array.isArray(lines)) return [];
+  let changed=false;
+  const normalized=lines.map((line, idx)=>{
+    const parsed=parseOrderValue(line?.order);
+    if(parsed===null){
+      changed=true;
+      return { ...line, order: idx+1 };
+    }
+    if(line.order!==parsed){
+      changed=true;
+      return { ...line, order: parsed };
+    }
+    return line;
+  });
+  return changed?normalized:lines;
+}
+
+function nextInvoiceLineOrder(lines){
+  if(!Array.isArray(lines) || !lines.length) return 1;
+  let max=0;
+  lines.forEach((line, idx)=>{
+    const parsed=parseOrderValue(line?.order);
+    if(parsed===null){
+      max=Math.max(max, idx+1);
+    }else{
+      max=Math.max(max, parsed);
+    }
+  });
+  return max+1;
+}
+
+function sortLinesByOrderValue(lines){
+  const list=Array.isArray(lines)?lines:[];
+  return list
+    .map((line, idx)=>({ line, idx }))
+    .sort((a,b)=>{
+      const orderA=parseOrderValue(a.line?.order);
+      const orderB=parseOrderValue(b.line?.order);
+      const valueA=orderA??(a.idx+1);
+      const valueB=orderB??(b.idx+1);
+      if(valueA!==valueB) return valueA-valueB;
+      return a.idx-b.idx;
+    })
+    .map(entry=>entry.line);
+}
+
+function prepareLinesForExport(lines){
+  return sortLinesByOrderValue(lines).map((line)=>{
+    const normalizedOrder=parseOrderValue(line?.order);
+    const clone={ ...line };
+    if(normalizedOrder===null){
+      delete clone.order;
+    }else{
+      clone.order=normalizedOrder;
+    }
+    return clone;
+  });
+}
+
 function randomId(prefix = "id"){
   if(typeof crypto !== "undefined" && crypto.randomUUID){
     return `${prefix}_${crypto.randomUUID()}`;
@@ -510,11 +576,12 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
 
   const startY = (doc.lastAutoTable?.finalY || y0+110) + 10;
   const prefs = columnOptions || {};
-  const includeDiscount = prefs.discount ?? (totals.discount > 0.0001 || items.some(it=>asNumber(it.discountPct||0)));
+  const invoiceItems = prepareLinesForExport(items || []);
+  const includeDiscount = prefs.discount ?? (totals.discount > 0.0001 || invoiceItems.some(it=>asNumber(it.discountPct||0)));
   const includeTax = prefs.tax ?? true;
   const includeAmount = prefs.amount ?? true;
   const head = [["#","Title / Description","Qty","Rate",...(includeDiscount?["Disc%"]:[]),...(includeTax?["Tax%"]:[]),...(includeAmount?["Amount"]:[]),"Net"]];
-  const body = items.map((it,i)=>{
+  const body = invoiceItems.map((it,i)=>{
     const r=computeLine(it);
     const row=[String(i+1), `${it.title}${it.author?`\n${it.author}`:""}${it.publisher?` • ${it.publisher}`:""}`, String(it.qty||1), formatINR(r.appliedRate)];
     if(includeDiscount) row.push(String(asNumber(it.discountPct||0)));
@@ -711,6 +778,10 @@ export default function App(){
   },[setSavedInvoices]);
 
   useEffect(()=>{
+    setLines(prev=>normalizeInvoiceLines(prev));
+  },[setLines]);
+
+  useEffect(()=>{
     if(!selectedCustomer) return;
     if(selectedCustomer.uid) return;
     setSelectedCustomer(normalizeCustomer(selectedCustomer));
@@ -856,23 +927,32 @@ export default function App(){
   function addLine(b){
     const fallbackTax = defaultTaxPct ?? 0;
     const taxValue = b.default_tax_pct !== undefined ? b.default_tax_pct : fallbackTax;
-    setLines(p=>[...p,{
-      sku:b.sku,
-      title:b.title,
-      author:b.author,
-      publisher:b.publisher,
-      qty:1,
-      mrp:asNumber(b.mrp),
-      rate:"",
-      discountPct:asNumber(b.default_discount_pct||0),
-      taxPct:asNumber(taxValue)
-    }]);
+    setLines(prev=>{
+      const list=Array.isArray(prev)?prev:[];
+      const order=nextInvoiceLineOrder(list);
+      return [
+        ...list,
+        {
+          sku:b.sku,
+          title:b.title,
+          author:b.author,
+          publisher:b.publisher,
+          qty:1,
+          mrp:asNumber(b.mrp),
+          rate:"",
+          discountPct:asNumber(b.default_discount_pct||0),
+          taxPct:asNumber(taxValue),
+          order,
+        }
+      ];
+    });
   }
   function addAllBooks(list){
     if(!list.length) return;
     setLines(prev=>{
       const existingKeys = new Set(prev.map(l=>`${l.sku||""}__${l.title||""}`));
       const additions = [];
+      let nextOrder = nextInvoiceLineOrder(prev);
       for(const b of list){
         const key = `${b.sku||""}__${b.title||""}`;
         if(existingKeys.has(key)) continue;
@@ -888,7 +968,8 @@ export default function App(){
           mrp:asNumber(b.mrp),
           rate:"",
           discountPct:asNumber(b.default_discount_pct||0),
-          taxPct:asNumber(taxValue)
+          taxPct:asNumber(taxValue),
+          order: nextOrder++,
         });
       }
       if(!additions.length) return prev;
@@ -951,6 +1032,22 @@ export default function App(){
     target=Math.max(0, Math.min(target, total-1));
     handleDragEnd();
     reorderLines(from,target);
+  }
+  function applyOrderNumbers(){
+    setLines(prev=>{
+      const sorted=sortLinesByOrderValue(prev);
+      const lengthDiffers=sorted.length!==prev.length;
+      if(lengthDiffers){
+        return normalizeInvoiceLines(sorted.map(line=>({ ...line })));
+      }
+      for(let i=0;i<sorted.length;i+=1){
+        if(sorted[i]!==prev[i]){
+          return normalizeInvoiceLines(sorted.map(line=>({ ...line })));
+        }
+      }
+      return normalizeInvoiceLines(prev);
+    });
+    setEditingLineIndex(null);
   }
   function removeLine(i){
     setLines(p=>p.filter((_,idx)=>idx!==i));
@@ -1034,13 +1131,14 @@ export default function App(){
 
   async function generateSingle(){
     const meta=currentInvoiceMeta();
-    const doc=renderInvoicePdf({ meta, items:lines, totals, columnOptions:pdfColumnPrefs });
+    const orderedLines=prepareLinesForExport(lines);
+    const doc=renderInvoicePdf({ meta, items:orderedLines, totals, columnOptions:pdfColumnPrefs });
     doc.save(`${meta.invoice_no||"invoice"}.pdf`);
     await persistInvoiceRecord({
       invoiceNo: meta.invoice_no,
       customerName: meta.customer_name,
       meta,
-      items: lines,
+      items: orderedLines,
       totals,
       pdfColumnPrefs,
       source: "single",
@@ -1198,7 +1296,11 @@ export default function App(){
 
   function loadDraft(draft){
     if(!draft) return;
-    setLines(draft.lines?.map(l=>({ ...l }))||[]);
+    setLines(prev=>{
+      const cloned=draft.lines?.map(l=>({ ...l }))||[];
+      return normalizeInvoiceLines(cloned);
+    });
+    setEditingLineIndex(null);
     setPdfColumnPrefs(draft.pdfColumnPrefs||{});
     setSelectedCustomer(draft.meta ? normalizeCustomer(draft.meta) : null);
     setDraftLabel(draft.label||"");
@@ -1218,6 +1320,20 @@ export default function App(){
           const match=catalog.find(b=>String(b.sku)===String(li.sku_or_title)||String(b.title).toLowerCase()===String(li.sku_or_title).toLowerCase());
           const title=match?.title||li.sku_or_title||li.title||"Item";
           const taxSource = li.tax_pct_override??match?.default_tax_pct??defaultTaxPct??0;
+          const rawOrder =
+            li.order ??
+            li.Order ??
+            li.serial ??
+            li.Serial ??
+            li.serial_no ??
+            li.serialNo ??
+            li.SerialNo ??
+            li.serial_number ??
+            li.SerialNumber ??
+            li.sequence ??
+            li.Sequence ??
+            null;
+          const parsedOrder = parseOrderValue(rawOrder);
           return {
             title,
             author:match?.author||li.author||"",
@@ -1226,19 +1342,21 @@ export default function App(){
             mrp:asNumber(li.mrp??match?.mrp??li.rate_override??0),
             rate:li.rate_override??"",
             discountPct:asNumber(li.discount_pct_override??match?.default_discount_pct??0),
-            taxPct:asNumber(taxSource)
+            taxPct:asNumber(taxSource),
+            order: parsedOrder ?? undefined
           };
         });
       const used = perItems.length?perItems:lines;
       const totals=used.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; a.qty+=asNumber(it.qty||0,0); return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 });
-      const doc=renderInvoicePdf({ meta:cust, items:used, totals, columnOptions:pdfColumnPrefs });
+      const orderedUsed=prepareLinesForExport(used);
+      const doc=renderInvoicePdf({ meta:cust, items:orderedUsed, totals, columnOptions:pdfColumnPrefs });
       const blob=doc.output("blob");
       zip.file(`${invNo||"invoice"}.pdf`, blob);
       await persistInvoiceRecord({
         invoiceNo: cust.invoice_no,
         customerName: cust.customer_name,
         meta: cust,
-        items: used,
+        items: orderedUsed,
         totals,
         pdfColumnPrefs,
         source: "batch",
@@ -1482,7 +1600,7 @@ export default function App(){
             </div>
             <div style={{overflow:'auto', marginTop:12}}>
               <table>
-                <thead><tr><th style={{width:72}}>Order ↕</th><th>Title</th><th style={{textAlign:'center'}}>Qty</th><th>MRP</th><th style={{textAlign:'center'}}>Rate</th><th>Disc%</th><th>Tax%</th><th>Amount</th><th style={{textAlign:'center'}}>Net</th><th></th></tr></thead>
+                <thead><tr><th style={{width:120}}>Order ↕</th><th>Title</th><th style={{textAlign:'center'}}>Qty</th><th>MRP</th><th style={{textAlign:'center'}}>Rate</th><th>Disc%</th><th>Tax%</th><th>Amount</th><th style={{textAlign:'center'}}>Net</th><th></th></tr></thead>
                 <tbody>
                   {lines.map((l,i)=>{ const r=computeLine(l); const isActive = dragIndex===i; const isTarget = dragOverIndex===i && dragIndex!==null && dragIndex!==i; const isEditingLine = editingLineIndex===i; return (
                     <tr
@@ -1500,11 +1618,21 @@ export default function App(){
                         boxShadow: isEditingLine ? 'inset 0 0 0 2px rgba(14,165,233,0.45)' : undefined
                       }}
                     >
-                      <td style={{textAlign:'center', fontWeight:600, color:'#334155'}}>
-                        <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:2}}>
-                          <span aria-hidden="true" style={{fontSize:12, color:'#94a3b8'}}>☰</span>
-                          <span>{i+1}</span>
-                        </div>
+                      <td className="invoice-line__order-cell">
+                        <div className="invoice-line__order-handle" aria-hidden="true">☰</div>
+                        <span className="invoice-line__order-index">{i+1}</span>
+                        <input
+                          className="input invoice-line__order-input"
+                          value={l.order ?? ''}
+                          onChange={e=>{
+                            const value=e.target.value;
+                            updateLine(i,{ order:value });
+                          }}
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          placeholder={String(i+1)}
+                          aria-label="Serial number"
+                        />
                       </td>
                       <td>
                         <div className="invoice-line__details">
