@@ -1266,7 +1266,8 @@ export default function App(){
     const meta=currentInvoiceMeta();
     const label=(draftLabel||meta.invoice_no||"Draft").trim();
     const timestamp=new Date().toISOString();
-    const linesCopy=lines.map(l=>({ ...l }));
+    const normalizedLines=normalizeInvoiceLines(lines);
+    const linesCopy=sortLinesByOrderValue(normalizedLines).map((line)=>({ ...line }));
     const pdfPrefsCopy={ ...pdfColumnPrefs };
     const metaCopy={ ...meta };
     setSavedInvoices(prev=>{
