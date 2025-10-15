@@ -731,8 +731,25 @@ export default function App(){
   const [dragIndex,setDragIndex]=useState(null);
   const [dragOverIndex,setDragOverIndex]=useState(null);
   const [isBookModalOpen,setIsBookModalOpen]=useState(false);
+  const [isCustomerModalOpen,setIsCustomerModalOpen]=useState(false);
   const [bookForm,setBookForm]=useState(()=>({ sku:"", title:"", author:"", publisher:"", mrp:"", default_discount_pct:"", default_tax_pct:"" }));
+  const [customerForm,setCustomerForm]=useState(()=>({
+    invoice_no:"",
+    customer_name:"",
+    billing_address:"",
+    shipping_address:"",
+    gstin:"",
+    pan:"",
+    place_of_supply:"",
+    email:"",
+    phone:"",
+    invoice_date:"",
+    due_date:"",
+    notes:"",
+  }));
   const [autoAddNewBook,setAutoAddNewBook]=useState(true);
+  const [autoSelectNewCustomer,setAutoSelectNewCustomer]=useState(true);
+  const [invoiceCatalogQuery,setInvoiceCatalogQuery]=useState("");
   const [draftLabel,setDraftLabel]=useState("");
   const dragIndexRef = React.useRef(null);
 
@@ -885,7 +902,27 @@ export default function App(){
     return ()=>window.removeEventListener('keydown', handler);
   },[isBookModalOpen]);
 
+  useEffect(()=>{
+    if(!isCustomerModalOpen) return;
+    const handler=(event)=>{
+      if(event.key==='Escape') setIsCustomerModalOpen(false);
+    };
+    window.addEventListener('keydown', handler);
+    return ()=>window.removeEventListener('keydown', handler);
+  },[isCustomerModalOpen]);
+
   const filteredBooks = useMemo(()=>{ const q=filter.trim().toLowerCase(); if(!q) return catalog; return catalog.filter(b=>[b.sku,b.title,b.author,b.publisher].filter(Boolean).some(f=>String(f).toLowerCase().includes(q))); },[filter,catalog]);
+  const trimmedInvoiceQuery = invoiceCatalogQuery.trim();
+  const invoiceCatalogMatches = useMemo(()=>{
+    const query = trimmedInvoiceQuery.toLowerCase();
+    if(query.length < 2) return [];
+    return catalog
+      .filter((b)=>[b.sku,b.title,b.author,b.publisher]
+        .filter(Boolean)
+        .some((field)=>String(field).toLowerCase().includes(query)))
+      .slice(0, 12);
+  },[trimmedInvoiceQuery,catalog]);
+  const canSearchCatalog = trimmedInvoiceQuery.length >= 2;
 
   function addLine(b){
     const fallbackTax = defaultTaxPct ?? 0;
@@ -944,6 +981,10 @@ export default function App(){
     setLines(p=>p.map(l=>({ ...l, taxPct:tax })));
   }
   function updateLine(i,patch){ setLines(p=>p.map((l,idx)=>idx===i?{...l,...patch}:l)); }
+  function clearInvoiceLines(){
+    setLines([]);
+    setEditingLineIndex(null);
+  }
   function reorderLines(from,to){
     if(from===null || to===null || from===to) return;
     setLines(prev=>{
@@ -1110,6 +1151,25 @@ export default function App(){
     setIsBookModalOpen(true);
   }
 
+  function openAddCustomerModal(){
+    setCustomerForm({
+      invoice_no:"",
+      customer_name:"",
+      billing_address:"",
+      shipping_address:"",
+      gstin:"",
+      pan:"",
+      place_of_supply:"",
+      email:"",
+      phone:"",
+      invoice_date:"",
+      due_date:"",
+      notes:"",
+    });
+    setAutoSelectNewCustomer(true);
+    setIsCustomerModalOpen(true);
+  }
+
   function upsertBook(book){
     const normalized=normalizeBook(book);
     setCatalog(prev=>{
@@ -1124,6 +1184,23 @@ export default function App(){
       }
       return mapped;
     });
+  }
+
+  function upsertCustomer(customer){
+    const normalized = normalizeCustomer(customer);
+    setCustomers(prev=>{
+      const existing = Array.isArray(prev) ? prev.slice() : [];
+      const mapped = existing.map(normalizeCustomer);
+      const idx = mapped.findIndex((item)=>item.uid===normalized.uid);
+      if(idx>=0){
+        const current = mapped[idx];
+        mapped[idx] = { ...current, ...normalized, uid: current.uid };
+      }else{
+        mapped.push(normalized);
+      }
+      return mapped;
+    });
+    return normalized;
   }
 
   function submitBookForm(e){
@@ -1144,6 +1221,44 @@ export default function App(){
       addLine(newBook);
     }
     setIsBookModalOpen(false);
+  }
+
+  function submitCustomerForm(e){
+    e.preventDefault();
+    const invoiceNo = customerForm.invoice_no?.trim();
+    const customerName = customerForm.customer_name?.trim();
+    if(!invoiceNo){ alert("Please enter an invoice number."); return; }
+    if(!customerName){ alert("Please enter a customer name."); return; }
+    const payload = {
+      invoice_no: invoiceNo,
+      customer_name: customerName,
+      billing_address: customerForm.billing_address?.trim() || "",
+      shipping_address:
+        customerForm.shipping_address?.trim() || customerForm.billing_address?.trim() || "",
+      gstin: customerForm.gstin?.trim() || "",
+      pan: customerForm.pan?.trim() || "",
+      place_of_supply: customerForm.place_of_supply?.trim() || "",
+      email: customerForm.email?.trim() || "",
+      phone: customerForm.phone?.trim() || "",
+      invoice_date: customerForm.invoice_date?.trim() || "",
+      due_date: customerForm.due_date?.trim() || "",
+      notes: customerForm.notes?.trim() || "",
+    };
+    const normalized = upsertCustomer(payload);
+    if(autoSelectNewCustomer){
+      setSelectedCustomer(normalized);
+      setTab("invoice");
+    }
+    setIsCustomerModalOpen(false);
+  }
+
+  function startNewInvoice(){
+    setLines([]);
+    setSelectedCustomer(null);
+    setDraftLabel("");
+    setEditingLineIndex(null);
+    setInvoiceCatalogQuery("");
+    setTab("invoice");
   }
 
   function saveCurrentDraft(){
@@ -1285,14 +1400,26 @@ export default function App(){
         {tab==='customers' && (
           <div>
             <div className="section-header">
-              <h2>Customers CSV</h2>
+              <div style={{display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
+                <h2 style={{margin:0}}>Customers</h2>
+                <button
+                  className="btn"
+                  style={{background:'linear-gradient(135deg, #38bdf8, #0ea5e9)', color:'#fff'}}
+                  onClick={openAddCustomerModal}
+                >
+                  Add Customer Manually
+                </button>
+              </div>
               <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
                 <span className="pill">{customers.length ? `${customers.length} customers loaded` : 'Awaiting CSV upload'}</span>
                 <SyncStatusPill status={customerSyncStatus} fallback="Cloud sync off" />
               </div>
             </div>
             <p style={{color:'#475569', marginTop:0}}>Load customers and then switch to Invoice tab to preview or batch-generate colourful PDFs.</p>
-            <input type="file" accept=".csv" onChange={onLoadCustomers} />
+            <div style={{display:'flex', flexWrap:'wrap', gap:12, alignItems:'center'}}>
+              <input type="file" accept=".csv" onChange={onLoadCustomers} />
+              <span style={{fontSize:12, color:'#64748b'}}>You can also add one-off customers manually.</span>
+            </div>
             <div style={{maxHeight:360, overflow:'auto', marginTop:16}}>
               <table>
                 <thead><tr><th>Invoice No</th><th>Name</th><th>Billing</th><th>Shipping</th><th>GSTIN</th></tr></thead>
@@ -1337,7 +1464,10 @@ export default function App(){
         {tab==='invoice' && (
           <div>
             <div className="section-header">
-              <h2>Invoice Builder</h2>
+              <div style={{display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
+                <h2 style={{margin:0}}>Invoice Builder</h2>
+                <button className="btn" style={{background:'linear-gradient(135deg,#f97316,#fb923c)', color:'#fff'}} onClick={startNewInvoice}>New Invoice</button>
+              </div>
               <span className="pill">{lines.length ? `${lines.length} line items ready` : 'Add titles from the catalog'}</span>
             </div>
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))', gap:16}}>
@@ -1354,6 +1484,47 @@ export default function App(){
                 <label>Batch output</label>
                 <button className="btn green" style={{display:'block', width:'100%', marginTop:12}} onClick={generateBatch}>Generate ZIP of PDFs</button>
               </div>
+            </div>
+            <div style={{marginTop:24, padding:'16px', background:'#f8fafc', borderRadius:12}}>
+              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, flexWrap:'wrap'}}>
+                <h3 style={{margin:0, fontSize:16, color:'#0f172a'}}>Add catalog titles</h3>
+                {canSearchCatalog && invoiceCatalogMatches.length>0 && (
+                  <span className="pill">{invoiceCatalogMatches.length} matches</span>
+                )}
+              </div>
+              <p style={{color:'#475569', fontSize:12, marginTop:8, marginBottom:12}}>Search your catalog without leaving the invoice builder. Select a title to add it as a new line.</p>
+              <input
+                className="input"
+                value={invoiceCatalogQuery}
+                onChange={(e)=>setInvoiceCatalogQuery(e.target.value)}
+                placeholder={catalog.length ? 'Search by title, author, publisher, or SKU' : 'Load the catalog to start searching'}
+                disabled={!catalog.length}
+              />
+              {canSearchCatalog ? (
+                <div style={{marginTop:12, maxHeight:220, overflow:'auto', border:'1px solid rgba(148,163,184,0.35)', borderRadius:12}}>
+                  {invoiceCatalogMatches.length ? (
+                    <ul style={{listStyle:'none', margin:0, padding:0}}>
+                      {invoiceCatalogMatches.map((book)=> (
+                        <li key={book.uid} style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, padding:'10px 14px', borderBottom:'1px solid rgba(148,163,184,0.25)'}}>
+                          <div style={{flex:'1 1 auto', minWidth:0}}>
+                            <div style={{fontWeight:600, color:'#0f172a', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{book.title || 'Untitled'}</div>
+                            <div style={{fontSize:12, color:'#64748b', display:'flex', flexWrap:'wrap', gap:6}}>
+                              {book.author && <span>{book.author}</span>}
+                              {book.publisher && <span>{book.publisher}</span>}
+                              {book.sku && <span style={{fontVariantNumeric:'tabular-nums'}}>SKU: {book.sku}</span>}
+                            </div>
+                          </div>
+                          <button className="btn sky" type="button" onClick={()=>addLine(book)}>Add</button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div style={{padding:'12px 14px', color:'#64748b', fontSize:13}}>No catalog titles match “{trimmedInvoiceQuery}”.</div>
+                  )}
+                </div>
+              ) : (
+                <div style={{marginTop:12, color:'#64748b', fontSize:12}}>Type at least two characters to see matching catalog titles.</div>
+              )}
             </div>
             <div style={{marginTop:24, padding:'16px', background:'#f8fafc', borderRadius:12}}>
               <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
@@ -1422,13 +1593,10 @@ export default function App(){
                 </table>
               </div>
             </div>
-            <div style={{display:'flex', flexWrap:'wrap', gap:12, alignItems:'center', marginTop:16}}>
-              <p style={{color:'#475569', fontSize:12, margin:0, flex:'1 1 260px'}}>
-                Drag the order handle or type serial numbers to arrange invoice lines before exporting.
-              </p>
-              <button className="btn sky" style={{padding:'8px 14px'}} onClick={applyOrderNumbers}>
-                Apply order numbers
-              </button>
+            <p style={{color:'#475569', fontSize:12, marginTop:16}}>Drag the order column handle to arrange invoice lines before exporting.</p>
+            <div style={{display:'flex', justifyContent:'flex-end', gap:8, flexWrap:'wrap'}}>
+              <button className="btn gray" onClick={applyDefaultTax} type="button">Apply default tax to all</button>
+              <button className="btn gray" onClick={clearInvoiceLines} type="button" disabled={!lines.length}>Remove all lines</button>
             </div>
             <div style={{overflow:'auto', marginTop:12}}>
               <table>
@@ -1511,7 +1679,14 @@ export default function App(){
                         </div>
                       </td>
                       <td style={{textAlign:'center'}}><input className="input" value={l.qty} onChange={e=>updateLine(i,{qty:asNumber(e.target.value,1)})} style={{textAlign:'center'}} /></td>
-                      <td style={{textAlign:'right', fontWeight:500}}>{formatINR(l.mrp)}</td>
+                      <td style={{textAlign:'center'}}>
+                        <input
+                          className="input"
+                          value={l.mrp}
+                          onChange={(e)=>updateLine(i,{mrp:asNumber(e.target.value,0)})}
+                          style={{textAlign:'center'}}
+                        />
+                      </td>
                       <td style={{textAlign:'center'}}><input className="input" value={l.rate} placeholder="(MRP)" onChange={e=>updateLine(i,{rate:e.target.value})} style={{textAlign:'center'}} /></td>
                       <td><input className="input" value={l.discountPct} onChange={e=>updateLine(i,{discountPct:asNumber(e.target.value,0)})} /></td>
                       <td><input className="input" value={l.taxPct} onChange={e=>updateLine(i,{taxPct:asNumber(e.target.value,0)})} /></td>
@@ -1529,7 +1704,7 @@ export default function App(){
                       </td>
                     </tr>
                   )})}
-                  {!lines.length && <tr><td colSpan="10" style={{color:'#64748b', textAlign:'center'}}>No lines yet — go to Books tab and click “Add”.</td></tr>}
+                  {!lines.length && <tr><td colSpan="10" style={{color:'#64748b', textAlign:'center'}}>No lines yet — search above or open the Books tab to add titles.</td></tr>}
                 </tbody>
                 <tfoot>
                   <tr>
@@ -1576,6 +1751,85 @@ export default function App(){
           </div>
         )}
       </div>
+      {isCustomerModalOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={e=>{ if(e.target===e.currentTarget) setIsCustomerModalOpen(false); }}>
+          <div className="modal-panel">
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
+              <h3 style={{margin:0, fontSize:18}}>Add Customer</h3>
+              <button className="btn gray" type="button" onClick={()=>setIsCustomerModalOpen(false)}>Close</button>
+            </div>
+            <p style={{marginTop:0, fontSize:13, color:'#475569'}}>Capture a quick customer record without touching your CSV. We will keep it in your local list.</p>
+            <form onSubmit={submitCustomerForm}>
+              <div style={{display:'grid', gap:12}}>
+                <div style={{display:'grid', gap:12, gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))'}}>
+                  <div>
+                    <label>Invoice No *</label>
+                    <input className="input" value={customerForm.invoice_no} onChange={e=>setCustomerForm(prev=>({ ...prev, invoice_no:e.target.value }))} required />
+                  </div>
+                  <div>
+                    <label>Customer Name *</label>
+                    <input className="input" value={customerForm.customer_name} onChange={e=>setCustomerForm(prev=>({ ...prev, customer_name:e.target.value }))} required />
+                  </div>
+                </div>
+                <div>
+                  <label>Billing Address</label>
+                  <textarea className="input" rows={3} value={customerForm.billing_address} onChange={e=>setCustomerForm(prev=>({ ...prev, billing_address:e.target.value }))} />
+                </div>
+                <div>
+                  <label>Shipping Address</label>
+                  <textarea className="input" rows={3} value={customerForm.shipping_address} onChange={e=>setCustomerForm(prev=>({ ...prev, shipping_address:e.target.value }))} placeholder="Defaults to billing address" />
+                </div>
+                <div style={{display:'grid', gap:12, gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))'}}>
+                  <div>
+                    <label>GSTIN</label>
+                    <input className="input" value={customerForm.gstin} onChange={e=>setCustomerForm(prev=>({ ...prev, gstin:e.target.value }))} />
+                  </div>
+                  <div>
+                    <label>PAN</label>
+                    <input className="input" value={customerForm.pan} onChange={e=>setCustomerForm(prev=>({ ...prev, pan:e.target.value }))} />
+                  </div>
+                  <div>
+                    <label>Place of Supply</label>
+                    <input className="input" value={customerForm.place_of_supply} onChange={e=>setCustomerForm(prev=>({ ...prev, place_of_supply:e.target.value }))} />
+                  </div>
+                </div>
+                <div style={{display:'grid', gap:12, gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))'}}>
+                  <div>
+                    <label>Email</label>
+                    <input className="input" value={customerForm.email} onChange={e=>setCustomerForm(prev=>({ ...prev, email:e.target.value }))} />
+                  </div>
+                  <div>
+                    <label>Phone</label>
+                    <input className="input" value={customerForm.phone} onChange={e=>setCustomerForm(prev=>({ ...prev, phone:e.target.value }))} />
+                  </div>
+                </div>
+                <div style={{display:'grid', gap:12, gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))'}}>
+                  <div>
+                    <label>Invoice Date</label>
+                    <input className="input" value={customerForm.invoice_date} onChange={e=>setCustomerForm(prev=>({ ...prev, invoice_date:e.target.value }))} placeholder="DD-MM-YYYY" />
+                  </div>
+                  <div>
+                    <label>Due Date</label>
+                    <input className="input" value={customerForm.due_date} onChange={e=>setCustomerForm(prev=>({ ...prev, due_date:e.target.value }))} placeholder="DD-MM-YYYY" />
+                  </div>
+                </div>
+                <div>
+                  <label>Notes</label>
+                  <textarea className="input" rows={3} value={customerForm.notes} onChange={e=>setCustomerForm(prev=>({ ...prev, notes:e.target.value }))} />
+                </div>
+                <label style={{display:'flex', alignItems:'center', gap:8, fontSize:13, color:'#0f172a'}}>
+                  <input type="checkbox" checked={autoSelectNewCustomer} onChange={e=>setAutoSelectNewCustomer(e.target.checked)} />
+                  <span>Use this customer for the current invoice</span>
+                </label>
+                <div style={{display:'flex', justifyContent:'flex-end', gap:8}}>
+                  <button className="btn gray" type="button" onClick={()=>setIsCustomerModalOpen(false)}>Cancel</button>
+                  <button className="btn sky" type="submit">Save Customer</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       {isBookModalOpen && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={e=>{ if(e.target===e.currentTarget) setIsBookModalOpen(false); }}>
           <div className="modal-panel">
