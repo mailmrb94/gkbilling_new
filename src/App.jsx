@@ -7,6 +7,7 @@ import autoTable from "jspdf-autotable";
 import dayjs from "dayjs";
 import { useSupabaseSync } from "./useSupabaseSync";
 import { persistInvoiceRecord } from "./supabasePersistence";
+import { KANNADA_FONT_FAMILY, registerUnicodeFonts } from "./pdfFonts";
 import {
   isSupabaseConfigured,
   supabaseUrlError,
@@ -552,12 +553,14 @@ function computeLine({ qty = 1, mrp = 0, rate, discountPct = 0, taxPct = 0 }) {
 }
 function parseCsv(file) { return new Promise((resolve, reject) => Papa.parse(file, { header:true, skipEmptyLines:true, dynamicTyping:true, complete: r=>resolve(r.data), error: reject })); }
 
-function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
+async function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const doc = new jsPDF({ unit:"pt", format:"a4" });
+  await registerUnicodeFonts(doc);
+  const fontFamily = KANNADA_FONT_FAMILY;
   const pageWidth = doc.internal.pageSize.getWidth();
   brand = brand || { name: "GARANI PUBLICATION", address: "Old No.5A, New E351, 7th A Main Road, MSR Layout, Havanuru Layout, Bengaluru Urban, Bengaluru, Karnataka, 560073", phone: "Mobile: 9108447657", gstin: "GSTIN: 29CBIPN0092E1ZM" };
-  doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.text(brand.name, 40, 40);
-  doc.setFont("helvetica","normal"); doc.setFontSize(9);
+  doc.setFont(fontFamily,"bold"); doc.setFontSize(16); doc.text(brand.name, 40, 40);
+  doc.setFont(fontFamily,"normal"); doc.setFontSize(9);
   doc.text(brand.address, 40, 58, { maxWidth: pageWidth-80 });
   doc.text(`${brand.phone}    ${brand.gstin}`, 40, 74);
 
@@ -565,7 +568,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const left = [["Invoice No.", meta.invoice_no||"-"],["Invoice Date", meta.invoice_date||dayjs().format("DD-MM-YYYY")],["Due Date", meta.due_date||"-"]];
   const right = [["Place of Supply", meta.place_of_supply||"Karnataka"],["GSTIN", meta.gstin||"-"],["PAN", meta.pan||"-"]];
   autoTable(doc,{
-    startY:y0, theme:"plain", styles:{ fontSize:10, cellPadding:2 }, margin:{ left:40, right:40 },
+    startY:y0, theme:"plain", styles:{ font:fontFamily, fontSize:10, cellPadding:2 }, margin:{ left:40, right:40 },
     body:[[
       {content:`Bill To\n${meta.customer_name||"-"}\n${meta.billing_address||"-"}`},
       {content:`Ship To\n${meta.shipping_address||meta.billing_address||"-"}`},
@@ -615,7 +618,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
     body.push(totalsRow);
   }
   autoTable(doc,{
-    startY, head, body, styles:{ fontSize:9 }, headStyles:{ fillColor:[30,41,59] },
+    startY, head, body, styles:{ font:fontFamily, fontSize:9 }, headStyles:{ font:fontFamily, fillColor:[30,41,59] },
     margin:{ left:40, right:40 }, columnStyles
   });
 
@@ -656,7 +659,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
     }
   ];
   const summaryY = y1 + 18;
-  doc.setFont("helvetica","bold");
+  doc.setFont(fontFamily,"bold");
   doc.setFontSize(12);
   const summaryTitle = meta.invoice_no ? `Summary · Invoice ${meta.invoice_no}` : "Summary";
   doc.text(summaryTitle, 40, summaryY);
@@ -664,6 +667,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
     content:entry.label,
     styles:{
       halign:"center",
+      font:fontFamily,
       fontStyle:"bold",
       fontSize:9,
       textColor:[71,85,105],
@@ -675,6 +679,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
     content:entry.value,
     styles:{
       halign:entry.align||"center",
+      font:fontFamily,
       fontStyle:"bold",
       fontSize:entry.fontSize||12,
       textColor:entry.valueColor,
@@ -688,30 +693,33 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
     startY:summaryY+6,
     theme:"plain",
     margin:{ left:40, right:40 },
-    styles:{ lineColor:[148,163,184], lineWidth:0.4 },
+    styles:{ font:fontFamily, lineColor:[148,163,184], lineWidth:0.4 },
     body:[summaryLabelRow, summaryValueRow],
     columnStyles:summaryEntries.reduce((acc,_,idx)=>{
       acc[idx]={ cellWidth:(pageWidth-80)/summaryEntries.length, halign:"center" };
       return acc;
     },{})
   });
-  doc.setFont("helvetica","normal");
+  doc.setFont(fontFamily,"normal");
   doc.setFontSize(10);
   autoTable(doc,{
     startY:(doc.lastAutoTable?.finalY||y1+60)+6,
     theme:"grid",
     margin:{ left:40, right:40 },
-    styles:{ fontSize:10, cellPadding:{ top:10, bottom:10, left:12, right:12 }, lineWidth:0.4, lineColor:[148,163,184] },
+    styles:{ font:fontFamily, fontSize:10, cellPadding:{ top:10, bottom:10, left:12, right:12 }, lineWidth:0.4, lineColor:[148,163,184] },
     body:[[
-      { content:"Amount in Words", styles:{ fontStyle:"bold", textColor:[30,41,59], fillColor:[241,245,249] } },
-      { content:amountInWords, styles:{ textColor:[15,23,42] } }
+      { content:"Amount in Words", styles:{ font:fontFamily, fontStyle:"bold", textColor:[30,41,59], fillColor:[241,245,249] } },
+      { content:amountInWords, styles:{ font:fontFamily, textColor:[15,23,42] } }
     ]],
     columnStyles:{0:{cellWidth:(pageWidth-80)*0.3,halign:"left"},1:{cellWidth:(pageWidth-80)*0.7,halign:"left"}}
   });
 
   autoTable(doc,{
-    startY:(doc.lastAutoTable?.finalY||y1+60)+8, theme:"plain", margin:{ left:40, right:40 }, styles:{ fontSize:9, halign:"center" },
-    body:[[ {content:(meta.notes?`Notes: ${meta.notes}\n\n`:"")+"TERMS AND CONDITIONS\n1. Goods once sold will not be taken back or exchanged\n2. All disputes are subject to Bengaluru jurisdiction only"} ]]
+    startY:(doc.lastAutoTable?.finalY||y1+60)+8,
+    theme:"plain",
+    margin:{ left:40, right:40 },
+    styles:{ font:fontFamily, fontSize:9, halign:"center" },
+    body:[[ {content:(meta.notes?`Notes: ${meta.notes}\n\n`:"")+"TERMS AND CONDITIONS\n1. Goods once sold will not be taken back or exchanged\n2. All disputes are subject to Bengaluru jurisdiction only", styles:{ font:fontFamily } } ]]
   });
   return doc;
 }
@@ -1132,7 +1140,7 @@ export default function App(){
   async function generateSingle(){
     const meta=currentInvoiceMeta();
     const orderedLines=prepareLinesForExport(lines);
-    const doc=renderInvoicePdf({ meta, items:orderedLines, totals, columnOptions:pdfColumnPrefs });
+    const doc=await renderInvoicePdf({ meta, items:orderedLines, totals, columnOptions:pdfColumnPrefs });
     doc.save(`${meta.invoice_no||"invoice"}.pdf`);
     await persistInvoiceRecord({
       invoiceNo: meta.invoice_no,
@@ -1350,7 +1358,7 @@ export default function App(){
       const used = perItems.length?perItems:lines;
       const totals=used.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; a.qty+=asNumber(it.qty||0,0); return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 });
       const orderedUsed=prepareLinesForExport(used);
-      const doc=renderInvoicePdf({ meta:cust, items:orderedUsed, totals, columnOptions:pdfColumnPrefs });
+      const doc=await renderInvoicePdf({ meta:cust, items:orderedUsed, totals, columnOptions:pdfColumnPrefs });
       const blob=doc.output("blob");
       zip.file(`${invNo||"invoice"}.pdf`, blob);
       await persistInvoiceRecord({
