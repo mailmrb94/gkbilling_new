@@ -664,12 +664,13 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const doc = new jsPDF({ unit:"pt", format:"a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const resolvedBrand = brand || BRAND_LOOKUP[DEFAULT_BRAND_KEY];
-  const fonts = mergeFontStyles(resolvedBrand.fonts);
-  applyFont(doc, fonts.heading);
-  doc.text(resolvedBrand.name, 40, 40);
-  applyFont(doc, fonts.subheading);
-  doc.text(resolvedBrand.address, 40, 58, { maxWidth: pageWidth-80 });
-  doc.text(`${resolvedBrand.phone}    ${resolvedBrand.gstin}`, 40, 74);
+  doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.text(resolvedBrand.name, 40, 40);
+  doc.setFont("helvetica","normal"); doc.setFontSize(9);
+  const addressLines = doc.splitTextToSize(resolvedBrand.address, pageWidth - 80);
+  doc.text(addressLines, 40, 58);
+  const contactLineHeight = doc.getLineHeightFactor() * doc.getFontSize();
+  const contactY = 58 + contactLineHeight * addressLines.length + 4;
+  doc.text(`${resolvedBrand.phone}    ${resolvedBrand.gstin}`, 40, contactY);
 
   const y0=95;
   const left = [["Invoice No.", meta.invoice_no||"-"],["Invoice Date", meta.invoice_date||dayjs().format("DD-MM-YYYY")],["Due Date", meta.due_date||"-"]];
