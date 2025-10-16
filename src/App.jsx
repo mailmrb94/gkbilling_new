@@ -91,6 +91,14 @@ const BRAND_OPTIONS = [
       "Old No.5A, New E351, 7th A Main Road, MSR Layout, Havanuru Layout,\nBengaluru Urban, Bengaluru, Karnataka, 560073",
     phone: "Mobile: 9108447657",
     gstin: "GSTIN: 29CBIPN0092E1ZM",
+    fonts: {
+      heading: { size: 18 },
+      subheading: { size: 10 },
+      tableHead: { size: 10 },
+      summaryTitle: { size: 13 },
+      summaryValue: { size: 15 },
+      summaryHighlight: { size: 18 }
+    }
   },
   {
     id: "yogi",
@@ -99,6 +107,19 @@ const BRAND_OPTIONS = [
       "No. 2/1/33, SBI Staff Colony, Hoshalli Extension, Stage 1, Vijayanagar,\nBengaluru, Karnataka 560040",
     phone: "Mobile: 9743402605",
     gstin: "GSTIN: 29ENSPB8959Q1ZK",
+    fonts: {
+      heading: { family: "times", size: 20 },
+      subheading: { family: "times", size: 11 },
+      tableHead: { family: "times", size: 10 },
+      tableBody: { family: "times", size: 10 },
+      summaryTitle: { family: "times", size: 13 },
+      summaryLabel: { family: "times", size: 10 },
+      summaryValue: { family: "times", size: 15 },
+      summaryHighlight: { family: "times", size: 18 },
+      amountLabel: { family: "times", size: 11 },
+      amountValue: { family: "times", size: 11 },
+      terms: { family: "times", style: "italic", size: 10 }
+    }
   },
   {
     id: "sadhana",
@@ -107,6 +128,19 @@ const BRAND_OPTIONS = [
       "No- 12, 2nd Floor, 2nd Stage Binny Layout, Attiguppe, Vijaynagar,\nBangalore, Karnataka, India 560040",
     phone: "Mobile: 7204039904",
     gstin: "GSTIN: 29ABGCS5683MIZG",
+    fonts: {
+      heading: { family: "courier", size: 18 },
+      subheading: { family: "courier", size: 9 },
+      tableHead: { family: "courier", size: 9 },
+      tableBody: { family: "courier", size: 9 },
+      summaryTitle: { family: "courier", size: 12 },
+      summaryLabel: { family: "courier", size: 9 },
+      summaryValue: { family: "courier", size: 13 },
+      summaryHighlight: { family: "courier", size: 16 },
+      amountLabel: { family: "courier", size: 10 },
+      amountValue: { family: "courier", size: 10 },
+      terms: { family: "courier", style: "italic", size: 9 }
+    }
   },
 ];
 
@@ -116,6 +150,40 @@ const BRAND_LOOKUP = BRAND_OPTIONS.reduce((acc, option) => {
 }, {});
 
 const DEFAULT_BRAND_KEY = BRAND_OPTIONS[0].id;
+
+const DEFAULT_BRAND_FONTS = Object.freeze({
+  heading: { family: "helvetica", style: "bold", size: 16 },
+  subheading: { family: "helvetica", style: "normal", size: 9 },
+  tableHead: { family: "helvetica", style: "bold", size: 9 },
+  tableBody: { family: "helvetica", style: "normal", size: 9 },
+  summaryTitle: { family: "helvetica", style: "bold", size: 12 },
+  summaryLabel: { family: "helvetica", style: "bold", size: 9 },
+  summaryValue: { family: "helvetica", style: "bold", size: 14 },
+  summaryHighlight: { family: "helvetica", style: "bold", size: 16 },
+  amountLabel: { family: "helvetica", style: "bold", size: 10 },
+  amountValue: { family: "helvetica", style: "normal", size: 10 },
+  terms: { family: "helvetica", style: "normal", size: 9 }
+});
+
+function mergeFontStyles(overrides) {
+  const merged = {};
+  const extras = overrides || {};
+  Object.keys(DEFAULT_BRAND_FONTS).forEach((key) => {
+    merged[key] = { ...DEFAULT_BRAND_FONTS[key], ...(extras[key] || {}) };
+  });
+  Object.keys(extras).forEach((key) => {
+    if (!merged[key]) {
+      merged[key] = { family: "helvetica", style: "normal", size: 10, ...extras[key] };
+    }
+  });
+  return merged;
+}
+
+function applyFont(doc, fontSpec) {
+  const { family = "helvetica", style = "normal", size = 10 } = fontSpec || {};
+  doc.setFont(family, style);
+  doc.setFontSize(size);
+}
 
 function normalizeBrandKey(value) {
   if (!value) return DEFAULT_BRAND_KEY;
@@ -596,8 +664,10 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const doc = new jsPDF({ unit:"pt", format:"a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const resolvedBrand = brand || BRAND_LOOKUP[DEFAULT_BRAND_KEY];
-  doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.text(resolvedBrand.name, 40, 40);
-  doc.setFont("helvetica","normal"); doc.setFontSize(9);
+  const fonts = mergeFontStyles(resolvedBrand.fonts);
+  applyFont(doc, fonts.heading);
+  doc.text(resolvedBrand.name, 40, 40);
+  applyFont(doc, fonts.subheading);
   doc.text(resolvedBrand.address, 40, 58, { maxWidth: pageWidth-80 });
   doc.text(`${resolvedBrand.phone}    ${resolvedBrand.gstin}`, 40, 74);
 
@@ -605,7 +675,12 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const left = [["Invoice No.", meta.invoice_no||"-"],["Invoice Date", meta.invoice_date||dayjs().format("DD-MM-YYYY")],["Due Date", meta.due_date||"-"]];
   const right = [["Place of Supply", meta.place_of_supply||"Karnataka"],["GSTIN", meta.gstin||"-"],["PAN", meta.pan||"-"]];
   autoTable(doc,{
-    startY:y0, theme:"plain", styles:{ fontSize:10, cellPadding:2 }, margin:{ left:40, right:40 },
+    startY:y0, theme:"plain", styles:{
+      font: fonts.subheading.family,
+      fontStyle: fonts.subheading.style,
+      fontSize: fonts.subheading.size,
+      cellPadding:2
+    }, margin:{ left:40, right:40 },
     body:[[
       {content:`Bill To\n${meta.customer_name||"-"}\n${meta.billing_address||"-"}`},
       {content:`Ship To\n${meta.shipping_address||meta.billing_address||"-"}`},
@@ -637,7 +712,9 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   if(includeAmount){ columnStyles[colIndex]={halign:"right",cellWidth:80}; colIndex+=1; }
   columnStyles[colIndex]={halign:"right",cellWidth:90};
   const totalStyles = (halign) => ({
-    fontStyle:"bold",
+    font: fonts.tableHead.family,
+    fontStyle: fonts.tableHead.style,
+    fontSize: fonts.tableHead.size,
     textColor:[0,0,0],
     halign
   });
@@ -655,7 +732,20 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
     body.push(totalsRow);
   }
   autoTable(doc,{
-    startY, head, body, styles:{ fontSize:9 }, headStyles:{ fillColor:[30,41,59] },
+    startY,
+    head,
+    body,
+    styles:{
+      font: fonts.tableBody.family,
+      fontStyle: fonts.tableBody.style,
+      fontSize: fonts.tableBody.size
+    },
+    headStyles:{
+      fillColor:[30,41,59],
+      font: fonts.tableHead.family,
+      fontStyle: fonts.tableHead.style,
+      fontSize: fonts.tableHead.size
+    },
     margin:{ left:40, right:40 }, columnStyles
   });
 
@@ -668,7 +758,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
       align:"center",
       fill:[241,245,249],
       valueColor:[30,41,59],
-      fontSize:14
+      fontSpec:fonts.summaryValue
     },
     {
       label:"Taxable Amount",
@@ -676,7 +766,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
       align:"right",
       fill:[241,245,249],
       valueColor:[15,23,42],
-      fontSize:14
+      fontSpec:fonts.summaryValue
     },
     {
       label:"Tax",
@@ -684,7 +774,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
       align:"right",
       fill:[241,245,249],
       valueColor:[15,23,42],
-      fontSize:14
+      fontSpec:fonts.summaryValue
     },
     {
       label:"Total Amount",
@@ -692,20 +782,20 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
       align:"right",
       fill:[224,242,254],
       valueColor:[14,165,233],
-      fontSize:16
+      fontSpec:fonts.summaryHighlight
     }
   ];
   const summaryY = y1 + 18;
-  doc.setFont("helvetica","bold");
-  doc.setFontSize(12);
+  applyFont(doc, fonts.summaryTitle);
   const summaryTitle = meta.invoice_no ? `Summary · Invoice ${meta.invoice_no}` : "Summary";
   doc.text(summaryTitle, 40, summaryY);
   const summaryLabelRow = summaryEntries.map(entry=>({
     content:entry.label,
     styles:{
       halign:"center",
-      fontStyle:"bold",
-      fontSize:9,
+      font: fonts.summaryLabel.family,
+      fontStyle: fonts.summaryLabel.style,
+      fontSize: fonts.summaryLabel.size,
       textColor:[71,85,105],
       fillColor:[226,232,240],
       cellPadding:{ top:6, bottom:6, left:8, right:8 }
@@ -715,8 +805,9 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
     content:entry.value,
     styles:{
       halign:entry.align||"center",
-      fontStyle:"bold",
-      fontSize:entry.fontSize||12,
+      font:(entry.fontSpec||fonts.summaryValue).family,
+      fontStyle:(entry.fontSpec||fonts.summaryValue).style,
+      fontSize:(entry.fontSpec||fonts.summaryValue).size,
       textColor:entry.valueColor,
       fillColor:entry.fill,
       cellPadding:{ top:12, bottom:12, left:12, right:12 },
@@ -735,22 +826,52 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
       return acc;
     },{})
   });
-  doc.setFont("helvetica","normal");
-  doc.setFontSize(10);
   autoTable(doc,{
     startY:(doc.lastAutoTable?.finalY||y1+60)+6,
     theme:"grid",
     margin:{ left:40, right:40 },
-    styles:{ fontSize:10, cellPadding:{ top:10, bottom:10, left:12, right:12 }, lineWidth:0.4, lineColor:[148,163,184] },
+    styles:{
+      font: fonts.amountValue.family,
+      fontStyle: fonts.amountValue.style,
+      fontSize: fonts.amountValue.size,
+      cellPadding:{ top:10, bottom:10, left:12, right:12 },
+      lineWidth:0.4,
+      lineColor:[148,163,184]
+    },
     body:[[
-      { content:"Amount in Words", styles:{ fontStyle:"bold", textColor:[30,41,59], fillColor:[241,245,249] } },
-      { content:amountInWords, styles:{ textColor:[15,23,42] } }
+      {
+        content:"Amount in Words",
+        styles:{
+          font: fonts.amountLabel.family,
+          fontStyle: fonts.amountLabel.style,
+          fontSize: fonts.amountLabel.size,
+          textColor:[30,41,59],
+          fillColor:[241,245,249]
+        }
+      },
+      {
+        content:amountInWords,
+        styles:{
+          font: fonts.amountValue.family,
+          fontStyle: fonts.amountValue.style,
+          fontSize: fonts.amountValue.size,
+          textColor:[15,23,42]
+        }
+      }
     ]],
     columnStyles:{0:{cellWidth:(pageWidth-80)*0.3,halign:"left"},1:{cellWidth:(pageWidth-80)*0.7,halign:"left"}}
   });
 
   autoTable(doc,{
-    startY:(doc.lastAutoTable?.finalY||y1+60)+8, theme:"plain", margin:{ left:40, right:40 }, styles:{ fontSize:9, halign:"center" },
+    startY:(doc.lastAutoTable?.finalY||y1+60)+8,
+    theme:"plain",
+    margin:{ left:40, right:40 },
+    styles:{
+      font: fonts.terms.family,
+      fontStyle: fonts.terms.style,
+      fontSize: fonts.terms.size,
+      halign:"center"
+    },
     body:[[ {content:(meta.notes?`Notes: ${meta.notes}\n\n`:"")+"TERMS AND CONDITIONS\n1. Goods once sold will not be taken back or exchanged\n2. All disputes are subject to Bengaluru jurisdiction only"} ]]
   });
   return doc;
