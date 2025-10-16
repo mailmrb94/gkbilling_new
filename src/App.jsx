@@ -732,6 +732,7 @@ export default function App(){
   const [dragOverIndex,setDragOverIndex]=useState(null);
   const [isBookModalOpen,setIsBookModalOpen]=useState(false);
   const [isCustomerModalOpen,setIsCustomerModalOpen]=useState(false);
+  const [editingCustomer,setEditingCustomer]=useState(null);
   const [bookForm,setBookForm]=useState(()=>({ sku:"", title:"", author:"", publisher:"", mrp:"", default_discount_pct:"", default_tax_pct:"" }));
   const [customerForm,setCustomerForm]=useState(()=>({
     invoice_no:"",
@@ -752,6 +753,12 @@ export default function App(){
   const [invoiceCatalogQuery,setInvoiceCatalogQuery]=useState("");
   const [draftLabel,setDraftLabel]=useState("");
   const dragIndexRef = React.useRef(null);
+  const isEditingCustomer = Boolean(editingCustomer);
+
+  const closeCustomerModal = React.useCallback(()=>{
+    setIsCustomerModalOpen(false);
+    setEditingCustomer(null);
+  },[setIsCustomerModalOpen,setEditingCustomer]);
 
   useEffect(()=>{
     setCatalog(prev=>{
@@ -905,11 +912,11 @@ export default function App(){
   useEffect(()=>{
     if(!isCustomerModalOpen) return;
     const handler=(event)=>{
-      if(event.key==='Escape') setIsCustomerModalOpen(false);
+      if(event.key==='Escape') closeCustomerModal();
     };
     window.addEventListener('keydown', handler);
     return ()=>window.removeEventListener('keydown', handler);
-  },[isCustomerModalOpen]);
+  },[isCustomerModalOpen,closeCustomerModal]);
 
   const filteredBooks = useMemo(()=>{ const q=filter.trim().toLowerCase(); if(!q) return catalog; return catalog.filter(b=>[b.sku,b.title,b.author,b.publisher].filter(Boolean).some(f=>String(f).toLowerCase().includes(q))); },[filter,catalog]);
   const trimmedInvoiceQuery = invoiceCatalogQuery.trim();
@@ -1152,6 +1159,7 @@ export default function App(){
   }
 
   function openAddCustomerModal(){
+    setEditingCustomer(null);
     setCustomerForm({
       invoice_no:"",
       customer_name:"",
@@ -1167,6 +1175,27 @@ export default function App(){
       notes:"",
     });
     setAutoSelectNewCustomer(true);
+    setIsCustomerModalOpen(true);
+  }
+
+  function openEditCustomerModal(customer){
+    const normalized = normalizeCustomer(customer || {});
+    setCustomerForm({
+      invoice_no: normalized.invoice_no || "",
+      customer_name: normalized.customer_name || "",
+      billing_address: normalized.billing_address || "",
+      shipping_address: normalized.shipping_address || "",
+      gstin: normalized.gstin || "",
+      pan: normalized.pan || "",
+      place_of_supply: normalized.place_of_supply || "",
+      email: normalized.email || "",
+      phone: normalized.phone || "",
+      invoice_date: normalized.invoice_date || "",
+      due_date: normalized.due_date || "",
+      notes: normalized.notes || "",
+    });
+    setAutoSelectNewCustomer(selectedCustomer?.uid === normalized.uid);
+    setEditingCustomer(normalized);
     setIsCustomerModalOpen(true);
   }
 
@@ -1244,12 +1273,21 @@ export default function App(){
       due_date: customerForm.due_date?.trim() || "",
       notes: customerForm.notes?.trim() || "",
     };
+    if(editingCustomer?.uid){
+      payload.uid = editingCustomer.uid;
+      if(editingCustomer.createdAt) payload.createdAt = editingCustomer.createdAt;
+      if(editingCustomer.meta) payload.meta = editingCustomer.meta;
+    }
     const normalized = upsertCustomer(payload);
-    if(autoSelectNewCustomer){
+    if(editingCustomer){
+      if(selectedCustomer?.uid === editingCustomer.uid){
+        setSelectedCustomer(normalized);
+      }
+    }else if(autoSelectNewCustomer){
       setSelectedCustomer(normalized);
       setTab("invoice");
     }
-    setIsCustomerModalOpen(false);
+    closeCustomerModal();
   }
 
   function startNewInvoice(){
@@ -1423,10 +1461,34 @@ export default function App(){
             </div>
             <div style={{maxHeight:360, overflow:'auto', marginTop:16}}>
               <table>
-                <thead><tr><th>Invoice No</th><th>Name</th><th>Billing</th><th>Shipping</th><th>GSTIN</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>Invoice No</th>
+                    <th>Name</th>
+                    <th>Billing</th>
+                    <th>Shipping</th>
+                    <th>GSTIN</th>
+                    <th></th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {customers.map((c,i)=>(<tr key={i}><td>{c.invoice_no}</td><td>{c.customer_name}</td><td>{c.billing_address}</td><td>{c.shipping_address}</td><td>{c.gstin||'-'}</td></tr>))}
-                  {!customers.length && <tr><td colSpan="5" style={{color:'#64748b', textAlign:'center'}}>No customers loaded</td></tr>}
+                  {customers.map((c,i)=>(
+                    <tr key={i}>
+                      <td>{c.invoice_no}</td>
+                      <td>{c.customer_name}</td>
+                      <td>{c.billing_address}</td>
+                      <td>{c.shipping_address}</td>
+                      <td>{c.gstin||'-'}</td>
+                      <td style={{textAlign:'right'}}>
+                        <button className="btn gray" type="button" onClick={()=>openEditCustomerModal(c)}>Edit</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!customers.length && (
+                    <tr>
+                      <td colSpan="6" style={{color:'#64748b', textAlign:'center'}}>No customers loaded</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1753,11 +1815,11 @@ export default function App(){
         )}
       </div>
       {isCustomerModalOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={e=>{ if(e.target===e.currentTarget) setIsCustomerModalOpen(false); }}>
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={e=>{ if(e.target===e.currentTarget) closeCustomerModal(); }}>
           <div className="modal-panel">
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
-              <h3 style={{margin:0, fontSize:18}}>Add Customer</h3>
-              <button className="btn gray" type="button" onClick={()=>setIsCustomerModalOpen(false)}>Close</button>
+              <h3 style={{margin:0, fontSize:18}}>{isEditingCustomer ? 'Edit Customer' : 'Add Customer'}</h3>
+              <button className="btn gray" type="button" onClick={closeCustomerModal}>Close</button>
             </div>
             <p style={{marginTop:0, fontSize:13, color:'#475569'}}>Capture a quick customer record without touching your CSV. We will keep it in your local list.</p>
             <form onSubmit={submitCustomerForm}>
@@ -1823,8 +1885,8 @@ export default function App(){
                   <span>Use this customer for the current invoice</span>
                 </label>
                 <div style={{display:'flex', justifyContent:'flex-end', gap:8}}>
-                  <button className="btn gray" type="button" onClick={()=>setIsCustomerModalOpen(false)}>Cancel</button>
-                  <button className="btn sky" type="submit">Save Customer</button>
+                  <button className="btn gray" type="button" onClick={closeCustomerModal}>Cancel</button>
+                  <button className="btn sky" type="submit">{isEditingCustomer ? 'Update Customer' : 'Save Customer'}</button>
                 </div>
               </div>
             </form>
