@@ -82,6 +82,46 @@ const TENS = [
   "Ninety"
 ];
 const INDIAN_UNITS = ["", "Thousand", "Lakh", "Crore", "Arab", "Kharab"];
+
+const BRAND_OPTIONS = [
+  {
+    id: "garani",
+    name: "GARANI PUBLICATION",
+    address:
+      "Old No.5A, New E351, 7th A Main Road, MSR Layout, Havanuru Layout,\nBengaluru Urban, Bengaluru, Karnataka, 560073",
+    phone: "Mobile: 9108447657",
+    gstin: "GSTIN: 29CBIPN0092E1ZM",
+  },
+  {
+    id: "yogi",
+    name: "YOGI Books and Stationary",
+    address:
+      "No. 2/1/33, SBI Staff Colony, Hoshalli Extension, Stage 1, Vijayanagar,\nBengaluru, Karnataka 560040",
+    phone: "Mobile: 9743402605",
+    gstin: "GSTIN: 29ENSPB8959Q1ZK",
+  },
+  {
+    id: "sadhana",
+    name: "Sadhana BM Pvt Ltd",
+    address:
+      "No- 12, 2nd Floor, 2nd Stage Binny Layout, Attiguppe, Vijaynagar,\nBangalore, Karnataka, India 560040",
+    phone: "Mobile: 7204039904",
+    gstin: "GSTIN: 29ABGCS5683MIZG",
+  },
+];
+
+const BRAND_LOOKUP = BRAND_OPTIONS.reduce((acc, option) => {
+  acc[option.id] = option;
+  return acc;
+}, {});
+
+const DEFAULT_BRAND_KEY = BRAND_OPTIONS[0].id;
+
+function normalizeBrandKey(value) {
+  if (!value) return DEFAULT_BRAND_KEY;
+  const text = String(value).trim().toLowerCase();
+  return BRAND_LOOKUP[text] ? text : DEFAULT_BRAND_KEY;
+}
 function convertBelowThousand(num){
   let value = num % 1000;
   const parts = [];
@@ -555,11 +595,11 @@ function parseCsv(file) { return new Promise((resolve, reject) => Papa.parse(fil
 function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const doc = new jsPDF({ unit:"pt", format:"a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
-  brand = brand || { name: "GARANI PUBLICATION", address: "Old No.5A, New E351, 7th A Main Road, MSR Layout, Havanuru Layout, Bengaluru Urban, Bengaluru, Karnataka, 560073", phone: "Mobile: 9108447657", gstin: "GSTIN: 29CBIPN0092E1ZM" };
-  doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.text(brand.name, 40, 40);
+  const resolvedBrand = brand || BRAND_LOOKUP[DEFAULT_BRAND_KEY];
+  doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.text(resolvedBrand.name, 40, 40);
   doc.setFont("helvetica","normal"); doc.setFontSize(9);
-  doc.text(brand.address, 40, 58, { maxWidth: pageWidth-80 });
-  doc.text(`${brand.phone}    ${brand.gstin}`, 40, 74);
+  doc.text(resolvedBrand.address, 40, 58, { maxWidth: pageWidth-80 });
+  doc.text(`${resolvedBrand.phone}    ${resolvedBrand.gstin}`, 40, 74);
 
   const y0=95;
   const left = [["Invoice No.", meta.invoice_no||"-"],["Invoice Date", meta.invoice_date||dayjs().format("DD-MM-YYYY")],["Due Date", meta.due_date||"-"]];
@@ -726,6 +766,10 @@ export default function App(){
   const [savedInvoices,setSavedInvoices]=usePersistentState("data.savedInvoices", []);
   const [defaultTaxPct,setDefaultTaxPct]=usePersistentState("settings.defaultTaxPct", 18);
   const [pdfColumnPrefs,setPdfColumnPrefs]=usePersistentState("settings.pdfColumnPrefs", () => ({}));
+  const [selectedBrandKey, setSelectedBrandKey] = usePersistentState(
+    "settings.brandKey",
+    () => DEFAULT_BRAND_KEY
+  );
   const [filter,setFilter]=usePersistentState("ui.filter", "");
   const [selectedCustomer,setSelectedCustomer]=usePersistentState("ui.selectedCustomer", null);
   const [dragIndex,setDragIndex]=useState(null);
@@ -754,6 +798,14 @@ export default function App(){
   const [draftLabel,setDraftLabel]=useState("");
   const dragIndexRef = React.useRef(null);
   const isEditingCustomer = Boolean(editingCustomer);
+
+  useEffect(() => {
+    setSelectedBrandKey((prev) => normalizeBrandKey(prev));
+  }, [setSelectedBrandKey]);
+
+  const selectedBrand = useMemo(() => {
+    return BRAND_LOOKUP[selectedBrandKey] || BRAND_LOOKUP[DEFAULT_BRAND_KEY];
+  }, [selectedBrandKey]);
 
   const closeCustomerModal = React.useCallback(()=>{
     setIsCustomerModalOpen(false);
@@ -1137,9 +1189,9 @@ export default function App(){
   }
 
   async function generateSingle(){
-    const meta=currentInvoiceMeta();
+    const meta={ ...currentInvoiceMeta(), brandKey: selectedBrandKey };
     const orderedLines=prepareLinesForExport(lines);
-    const doc=renderInvoicePdf({ meta, items:orderedLines, totals, columnOptions:pdfColumnPrefs });
+    const doc=renderInvoicePdf({ meta, items:orderedLines, totals, columnOptions:pdfColumnPrefs, brand:selectedBrand });
     doc.save(`${meta.invoice_no||"invoice"}.pdf`);
     await persistInvoiceRecord({
       invoiceNo: meta.invoice_no,
@@ -1307,7 +1359,7 @@ export default function App(){
     const normalizedLines=normalizeInvoiceLines(lines);
     const linesCopy=sortLinesByOrderValue(normalizedLines).map((line)=>({ ...line }));
     const pdfPrefsCopy={ ...pdfColumnPrefs };
-    const metaCopy={ ...meta };
+    const metaCopy={ ...meta, brandKey: selectedBrandKey };
     setSavedInvoices(prev=>{
       const drafts=Array.isArray(prev)?prev.map(normalizeDraft):[];
       const existingIndex=drafts.findIndex(d=>d.label.toLowerCase()===label.toLowerCase());
@@ -1342,6 +1394,9 @@ export default function App(){
     setEditingLineIndex(null);
     setPdfColumnPrefs(draft.pdfColumnPrefs||{});
     setSelectedCustomer(draft.meta ? normalizeCustomer(draft.meta) : null);
+    if(draft?.meta?.brandKey){
+      setSelectedBrandKey(normalizeBrandKey(draft.meta.brandKey));
+    }
     setDraftLabel(draft.label||"");
     setTab('invoice');
   }
@@ -1388,13 +1443,14 @@ export default function App(){
       const used = perItems.length?perItems:lines;
       const totals=used.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; a.qty+=asNumber(it.qty||0,0); return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 });
       const orderedUsed=prepareLinesForExport(used);
-      const doc=renderInvoicePdf({ meta:cust, items:orderedUsed, totals, columnOptions:pdfColumnPrefs });
+      const meta = { ...cust, brandKey: selectedBrandKey };
+      const doc=renderInvoicePdf({ meta, items:orderedUsed, totals, columnOptions:pdfColumnPrefs, brand:selectedBrand });
       const blob=doc.output("blob");
       zip.file(`${invNo||"invoice"}.pdf`, blob);
       await persistInvoiceRecord({
         invoiceNo: cust.invoice_no,
         customerName: cust.customer_name,
-        meta: cust,
+        meta,
         items: orderedUsed,
         totals,
         pdfColumnPrefs,
@@ -1534,6 +1590,27 @@ export default function App(){
               <span className="pill">{lines.length ? `${lines.length} line items ready` : 'Add titles from the catalog'}</span>
             </div>
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))', gap:16}}>
+              <div>
+                <label>Select publication header</label>
+                <select
+                  className="input"
+                  value={selectedBrandKey}
+                  onChange={(e)=>setSelectedBrandKey(normalizeBrandKey(e.target.value))}
+                >
+                  {BRAND_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+                <div style={{marginTop:8, fontSize:12, color:'#475569', lineHeight:1.5}}>
+                  {selectedBrand.address.split("\n").map((line, idx) => (
+                    <div key={idx}>{line}</div>
+                  ))}
+                  <div>{selectedBrand.phone}</div>
+                  <div>{selectedBrand.gstin}</div>
+                </div>
+              </div>
               <div>
                 <label>Pick customer by invoice no.</label>
                 <input className="input" placeholder="Type invoice_no" onChange={(e)=>pickCustomer(e.target.value)} />
