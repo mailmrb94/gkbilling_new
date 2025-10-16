@@ -88,7 +88,7 @@ const BRAND_OPTIONS = [
     id: "garani",
     name: "GARANI PUBLICATION",
     address:
-      "Old No.5A, New E351, 7th A Main Road, MSR Layout, Havanuru Layout, Bengaluru Urban, Bengaluru, Karnataka, 560073",
+      "Old No.5A, New E351, 7th A Main Road, MSR Layout, Havanuru Layout,\nBengaluru Urban, Bengaluru, Karnataka, 560073",
     phone: "Mobile: 9108447657",
     gstin: "GSTIN: 29CBIPN0092E1ZM",
   },
@@ -96,7 +96,7 @@ const BRAND_OPTIONS = [
     id: "yogi",
     name: "YOGI Books and Stationary",
     address:
-      "No. 2/1/33, SBI Staff Colony, Hoshalli Extension, Stage 1, Vijayanagar, Bengaluru, Karnataka 560040",
+      "No. 2/1/33, SBI Staff Colony, Hoshalli Extension, Stage 1, Vijayanagar,\nBengaluru, Karnataka 560040",
     phone: "Mobile: 9743402605",
     gstin: "GSTIN: 29ENSPB8959Q1ZK",
   },
@@ -104,7 +104,7 @@ const BRAND_OPTIONS = [
     id: "sadhana",
     name: "Sadhana BM Pvt Ltd",
     address:
-      "No- 12, 2nd Floor, 2nd Stage Binny Layout, Attiguppe, Vijaynagar, Bangalore, Karnataka, India 560040",
+      "No- 12, 2nd Floor, 2nd Stage Binny Layout, Attiguppe, Vijaynagar,\nBangalore, Karnataka, India 560040",
     phone: "Mobile: 7204039904",
     gstin: "GSTIN: 29ABGCS5683MIZG",
   },
@@ -598,8 +598,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const resolvedBrand = brand || BRAND_LOOKUP[DEFAULT_BRAND_KEY];
   doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.text(resolvedBrand.name, 40, 40);
   doc.setFont("helvetica","normal"); doc.setFontSize(9);
-  const brandAddressLine = resolvedBrand.address.replace(/\s*\n\s*/g, " ");
-  doc.text(brandAddressLine, 40, 58, { maxWidth: pageWidth-80 });
+  doc.text(resolvedBrand.address, 40, 58, { maxWidth: pageWidth-80 });
   doc.text(`${resolvedBrand.phone}    ${resolvedBrand.gstin}`, 40, 74);
 
   const y0=95;
@@ -1605,7 +1604,9 @@ export default function App(){
                   ))}
                 </select>
                 <div style={{marginTop:8, fontSize:12, color:'#475569', lineHeight:1.5}}>
-                  <div>{selectedBrand.address.replace(/\s*\n\s*/g, ' ')}</div>
+                  {selectedBrand.address.split("\n").map((line, idx) => (
+                    <div key={idx}>{line}</div>
+                  ))}
                   <div>{selectedBrand.phone}</div>
                   <div>{selectedBrand.gstin}</div>
                 </div>
