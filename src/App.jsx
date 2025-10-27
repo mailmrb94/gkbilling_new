@@ -937,7 +937,7 @@ export default function App(){
   const [lines,setLines]=usePersistentState("data.lines", []);
   const [editingLineIndex,setEditingLineIndex] = useState(null);
   const [savedInvoices,setSavedInvoices]=usePersistentState("data.savedInvoices", []);
-  const [defaultTaxPct,setDefaultTaxPct]=usePersistentState("settings.defaultTaxPct", 18);
+  const [defaultTaxPct,setDefaultTaxPct]=usePersistentState("settings.defaultTaxPct", 0);
   const [pdfColumnPrefs,setPdfColumnPrefs]=usePersistentState("settings.pdfColumnPrefs", () => ({}));
   const [selectedBrandKey, setSelectedBrandKey] = usePersistentState(
     "settings.brandKey",
