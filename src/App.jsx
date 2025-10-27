@@ -1294,16 +1294,32 @@ export default function App(){
   const totals = useMemo(()=>lines.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; a.qty+=asNumber(it.qty||0,0); return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 }),[lines]);
   const amountInWords = useMemo(()=>numberToIndianCurrencyWords(totals.net),[totals.net]);
   const autoDiscountColumn = useMemo(()=>totals.discount > 0.0001 || lines.some(it=>asNumber(it.discountPct||0)),[totals.discount,lines]);
-  const pdfColumns = useMemo(()=>({
-    discount: pdfColumnPrefs.discount ?? autoDiscountColumn,
-    tax: pdfColumnPrefs.tax ?? true,
-    amount: pdfColumnPrefs.amount ?? true,
-    titlesOnly: pdfColumnPrefs.titlesOnly ?? false
-  }),[pdfColumnPrefs,autoDiscountColumn]);
+  const pdfColumns = useMemo(()=>{
+    const titlesOnly = !!(pdfColumnPrefs.titlesOnly ?? false);
+    const discount = pdfColumnPrefs.discount ?? autoDiscountColumn;
+    const tax = pdfColumnPrefs.tax ?? true;
+    const amount = pdfColumnPrefs.amount ?? true;
+    return {
+      titlesOnly,
+      discount: titlesOnly ? false : discount,
+      tax: titlesOnly ? false : tax,
+      amount: titlesOnly ? false : amount,
+    };
+  },[pdfColumnPrefs,autoDiscountColumn]);
   const hasCustomPdfColumns = useMemo(()=>Object.keys(pdfColumnPrefs).length>0,[pdfColumnPrefs]);
 
   const togglePdfColumn = (key) => {
-    setPdfColumnPrefs(prev=>({ ...prev, [key]: !pdfColumns[key] }));
+    setPdfColumnPrefs(prev=>{
+      if(key === "titlesOnly"){
+        const nextValue = !prev?.titlesOnly;
+        if(nextValue){
+          return { ...prev, titlesOnly: true };
+        }
+        const { titlesOnly, ...rest } = prev || {};
+        return rest;
+      }
+      return { ...prev, [key]: !pdfColumns[key] };
+    });
   };
   const resetPdfColumns = () => setPdfColumnPrefs({});
 
