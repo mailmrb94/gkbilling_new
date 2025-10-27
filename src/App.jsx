@@ -694,6 +694,56 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const startY = (doc.lastAutoTable?.finalY || y0+110) + 10;
   const prefs = columnOptions || {};
   const invoiceItems = prepareLinesForExport(items || []);
+  const titlesOnly = !!prefs.titlesOnly;
+
+  if(titlesOnly){
+    const head = [["#","Title / Description"]];
+    const body = invoiceItems.map((it,i)=>{
+      const details = [it.title || "Untitled"];
+      if(it.author) details.push(it.author);
+      if(it.publisher) details.push(it.publisher);
+      return [String(i+1), details.join("\n")];
+    });
+    const rows = body.length ? body : [["-", "No items added"]];
+    autoTable(doc,{
+      startY,
+      head,
+      body:rows,
+      styles:{
+        font: fonts.tableBody.family,
+        fontStyle: fonts.tableBody.style,
+        fontSize: fonts.tableBody.size
+      },
+      headStyles:{
+        fillColor:[30,41,59],
+        font: fonts.tableHead.family,
+        fontStyle: fonts.tableHead.style,
+        fontSize: fonts.tableHead.size
+      },
+      margin:{ left:40, right:40 },
+      columnStyles:{
+        0:{ cellWidth:24, halign:"center" },
+        1:{ cellWidth:pageWidth-104, halign:"left" }
+      }
+    });
+    const termsStart = (doc.lastAutoTable?.finalY || startY) + 12;
+    autoTable(doc,{
+      startY:termsStart,
+      theme:"plain",
+      margin:{ left:40, right:40 },
+      styles:{
+        font: fonts.terms.family,
+        fontStyle: fonts.terms.style,
+        fontSize: fonts.terms.size,
+        halign:"center"
+      },
+      body:[[
+        { content:(meta.notes?`Notes: ${meta.notes}\n\n`:"")+"TERMS AND CONDITIONS\n1. Goods once sold will not be taken back or exchanged\n2. All disputes are subject to Bengaluru jurisdiction only" }
+      ]]
+    });
+    return doc;
+  }
+
   const includeDiscount = prefs.discount ?? (totals.discount > 0.0001 || invoiceItems.some(it=>asNumber(it.discountPct||0)));
   const includeTax = prefs.tax ?? true;
   const includeAmount = prefs.amount ?? true;
@@ -1244,15 +1294,32 @@ export default function App(){
   const totals = useMemo(()=>lines.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; a.qty+=asNumber(it.qty||0,0); return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 }),[lines]);
   const amountInWords = useMemo(()=>numberToIndianCurrencyWords(totals.net),[totals.net]);
   const autoDiscountColumn = useMemo(()=>totals.discount > 0.0001 || lines.some(it=>asNumber(it.discountPct||0)),[totals.discount,lines]);
-  const pdfColumns = useMemo(()=>({
-    discount: pdfColumnPrefs.discount ?? autoDiscountColumn,
-    tax: pdfColumnPrefs.tax ?? true,
-    amount: pdfColumnPrefs.amount ?? true
-  }),[pdfColumnPrefs,autoDiscountColumn]);
+  const pdfColumns = useMemo(()=>{
+    const titlesOnly = !!(pdfColumnPrefs.titlesOnly ?? false);
+    const discount = pdfColumnPrefs.discount ?? autoDiscountColumn;
+    const tax = pdfColumnPrefs.tax ?? true;
+    const amount = pdfColumnPrefs.amount ?? true;
+    return {
+      titlesOnly,
+      discount: titlesOnly ? false : discount,
+      tax: titlesOnly ? false : tax,
+      amount: titlesOnly ? false : amount,
+    };
+  },[pdfColumnPrefs,autoDiscountColumn]);
   const hasCustomPdfColumns = useMemo(()=>Object.keys(pdfColumnPrefs).length>0,[pdfColumnPrefs]);
 
   const togglePdfColumn = (key) => {
-    setPdfColumnPrefs(prev=>({ ...prev, [key]: !pdfColumns[key] }));
+    setPdfColumnPrefs(prev=>{
+      if(key === "titlesOnly"){
+        const nextValue = !prev?.titlesOnly;
+        if(nextValue){
+          return { ...prev, titlesOnly: true };
+        }
+        const { titlesOnly, ...rest } = prev || {};
+        return rest;
+      }
+      return { ...prev, [key]: !pdfColumns[key] };
+    });
   };
   const resetPdfColumns = () => setPdfColumnPrefs({});
 
@@ -1799,19 +1866,29 @@ export default function App(){
               <p style={{color:'#475569', fontSize:12, marginTop:0, marginBottom:12}}>Pick which columns should appear when you export the invoice PDF.</p>
               <div style={{display:'flex', flexWrap:'wrap', gap:16}}>
                 <label style={{display:'flex', alignItems:'center', gap:8, fontSize:14, color:'#0f172a'}}>
-                  <input type="checkbox" checked={pdfColumns.discount} onChange={()=>togglePdfColumn('discount')} />
+                  <input type="checkbox" checked={pdfColumns.titlesOnly} onChange={()=>togglePdfColumn('titlesOnly')} />
+                  <span>Titles only (hide quantities &amp; pricing)</span>
+                </label>
+                <label style={{display:'flex', alignItems:'center', gap:8, fontSize:14, color:'#0f172a'}}>
+                  <input type="checkbox" checked={pdfColumns.discount} onChange={()=>togglePdfColumn('discount')} disabled={pdfColumns.titlesOnly} />
                   <span>Discount %</span>
                 </label>
                 <label style={{display:'flex', alignItems:'center', gap:8, fontSize:14, color:'#0f172a'}}>
-                  <input type="checkbox" checked={pdfColumns.tax} onChange={()=>togglePdfColumn('tax')} />
+                  <input type="checkbox" checked={pdfColumns.tax} onChange={()=>togglePdfColumn('tax')} disabled={pdfColumns.titlesOnly} />
                   <span>Tax %</span>
                 </label>
                 <label style={{display:'flex', alignItems:'center', gap:8, fontSize:14, color:'#0f172a'}}>
-                  <input type="checkbox" checked={pdfColumns.amount} onChange={()=>togglePdfColumn('amount')} />
+                  <input type="checkbox" checked={pdfColumns.amount} onChange={()=>togglePdfColumn('amount')} disabled={pdfColumns.titlesOnly} />
                   <span>Amount</span>
                 </label>
-                <span style={{fontSize:12, color:'#64748b'}}>Net column is always included.</span>
+                <span style={{fontSize:12, color:'#64748b'}}>Net column is always included unless titles only mode is selected.</span>
               </div>
+              {pdfColumns.titlesOnly && (
+                <p style={{marginTop:12, fontSize:12, color:'#475569'}}>
+                  Titles-only mode exports a simplified PDF listing just the book titles.
+                  Quantity and pricing details are omitted.
+                </p>
+              )}
             </div>
             <div style={{marginTop:24, padding:'16px', background:'#f1f5f9', borderRadius:12}}>
               <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, flexWrap:'wrap'}}>
