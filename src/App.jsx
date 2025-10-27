@@ -1603,7 +1603,6 @@ export default function App(){
         .map(li=>{
           const match=catalog.find(b=>String(b.sku)===String(li.sku_or_title)||String(b.title).toLowerCase()===String(li.sku_or_title).toLowerCase());
           const title=match?.title||li.sku_or_title||li.title||"Item";
-          const taxSource = li.tax_pct_override??match?.default_tax_pct??defaultTaxPct??0;
           const rawOrder =
             li.order ??
             li.Order ??
@@ -1626,11 +1625,12 @@ export default function App(){
             mrp:asNumber(li.mrp??match?.mrp??li.rate_override??0),
             rate:li.rate_override??"",
             discountPct:asNumber(li.discount_pct_override??match?.default_discount_pct??0),
-            taxPct:asNumber(taxSource),
+            taxPct:0,
             order: parsedOrder ?? undefined
           };
         });
-      const used = perItems.length?perItems:lines;
+      const baseItems = perItems.length ? perItems : lines.map(item=>({ ...item }));
+      const used = baseItems.map(item=>({ ...item, taxPct:0 }));
       const totals=used.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; a.qty+=asNumber(it.qty||0,0); return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 });
       const orderedUsed=prepareLinesForExport(used);
       const meta = { ...cust, brandKey: selectedBrandKey };
