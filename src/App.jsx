@@ -672,11 +672,19 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   doc.line(40, 48, pageWidth - 40, 48);
   doc.setDrawColor(0);
   doc.setFont("helvetica","normal"); doc.setFontSize(9);
+  const addressTop = 58;
   const addressLines = doc.splitTextToSize(resolvedBrand.address, pageWidth - 80);
-  doc.text(addressLines, 40, 58);
-  const contactLineHeight = doc.getLineHeightFactor() * doc.getFontSize();
-  const contactY = 58 + contactLineHeight * addressLines.length + 4;
-  doc.text(`${resolvedBrand.phone}    ${resolvedBrand.gstin}`, 40, contactY);
+  doc.text(addressLines, 40, addressTop);
+  const lineHeight = doc.getLineHeightFactor() * doc.getFontSize();
+  const addressBottom = addressTop + lineHeight * Math.max(addressLines.length - 1, 0);
+  const dividerY = addressBottom + lineHeight * 0.8;
+  doc.setDrawColor(148,163,184);
+  doc.setLineWidth(0.75);
+  doc.line(40, dividerY, pageWidth - 40, dividerY);
+  doc.setDrawColor(0);
+  const contactY = dividerY + 12;
+  doc.text(resolvedBrand.gstin, 40, contactY);
+  doc.text(resolvedBrand.phone, pageWidth - 40, contactY, { align: "right" });
 
   const y0=95;
   const left = [["Invoice No.", meta.invoice_no||"-"],["Invoice Date", meta.invoice_date||dayjs().format("DD-MM-YYYY")],["Due Date", meta.due_date||"-"]];
