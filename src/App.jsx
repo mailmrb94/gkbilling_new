@@ -663,9 +663,14 @@ function parseCsv(file) { return new Promise((resolve, reject) => Papa.parse(fil
 function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const doc = new jsPDF({ unit:"pt", format:"a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
   const resolvedBrand = brand || BRAND_LOOKUP[DEFAULT_BRAND_KEY];
   const fonts = mergeFontStyles(resolvedBrand.fonts);
   doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.text(resolvedBrand.name, 40, 40);
+  doc.setDrawColor(148,163,184);
+  doc.setLineWidth(0.75);
+  doc.line(40, 48, pageWidth - 40, 48);
+  doc.setDrawColor(0);
   doc.setFont("helvetica","normal"); doc.setFontSize(9);
   const addressLines = doc.splitTextToSize(resolvedBrand.address, pageWidth - 80);
   doc.text(addressLines, 40, 58);
@@ -926,6 +931,15 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
     },
     body:[[ {content:(meta.notes?`Notes: ${meta.notes}\n\n`:"")+"TERMS AND CONDITIONS\n1. Goods once sold will not be taken back or exchanged\n2. All disputes are subject to Bengaluru jurisdiction only"} ]]
   });
+  const footerNote = "Note: Printed Materials are Exempted from GST. HSN: 4901 (Applied to all Items of the Bill)";
+  applyFont(doc, fonts.terms);
+  const footerLines = doc.splitTextToSize(footerNote, pageWidth - 120);
+  const footerLineHeight = doc.getLineHeightFactor() * doc.getFontSize();
+  const footerBlockHeight = footerLines.length * footerLineHeight;
+  const afterTermsY = (doc.lastAutoTable?.finalY || 0) + 20 + footerLineHeight;
+  const maxFooterY = pageHeight - 40 - (footerBlockHeight - footerLineHeight);
+  const footerY = Math.min(Math.max(afterTermsY, footerLineHeight + 40), maxFooterY);
+  doc.text(footerLines, pageWidth / 2, footerY, { align:"center" });
   return doc;
 }
 
