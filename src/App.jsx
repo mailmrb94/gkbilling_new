@@ -686,13 +686,16 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   doc.text(labelText, labelX + labelPaddingX, headerY, { baseline: "bottom" });
   doc.setTextColor(0, 0, 0);
 
-  doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.text(resolvedBrand.name, 40, 40);
+  const brandNameY = headerY + 24;
+  const brandDividerY = brandNameY + 8;
+  const addressTop = brandDividerY + 10;
+
+  doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.text(resolvedBrand.name, 40, brandNameY);
   doc.setDrawColor(148,163,184);
   doc.setLineWidth(0.75);
-  doc.line(40, 48, pageWidth - 40, 48);
+  doc.line(40, brandDividerY, pageWidth - 40, brandDividerY);
   doc.setDrawColor(0);
   doc.setFont("helvetica","normal"); doc.setFontSize(9);
-  const addressTop = 58;
   const addressLines = doc.splitTextToSize(resolvedBrand.address, pageWidth - 80);
   doc.text(addressLines, 40, addressTop);
   const lineHeight = doc.getLineHeightFactor() * doc.getFontSize();
@@ -706,7 +709,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   doc.text(resolvedBrand.gstin, 40, contactY);
   doc.text(resolvedBrand.phone, pageWidth - 40, contactY, { align: "right" });
 
-  const y0=95;
+  const y0 = contactY + lineHeight;
   const left = [["Invoice No.", meta.invoice_no||"-"],["Invoice Date", meta.invoice_date||dayjs().format("DD-MM-YYYY")],["Due Date", meta.due_date||"-"]];
   const right = [["Place of Supply", meta.place_of_supply||"Karnataka"],["GSTIN", meta.gstin||"-"],["PAN", meta.pan||"-"]];
   autoTable(doc,{
