@@ -668,8 +668,11 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const fonts = mergeFontStyles(resolvedBrand.fonts);
   const headerX = 40;
   const headerY = 30;
-  doc.setFont("helvetica","bold"); doc.setFontSize(14); doc.text("TAX INVOICE", headerX, headerY);
-
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(14);
+  doc.setTextColor(71, 85, 105);
+  doc.text("TAX INVOICE", headerX, headerY);
+  doc.setTextColor(0, 0, 0);
   const labelText = "ORIGINAL FOR RECIPIENT";
   doc.setFont("helvetica","bold"); doc.setFontSize(10);
   const labelPaddingX = 6;
@@ -677,7 +680,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const labelLineHeight = doc.getLineHeightFactor() * doc.getFontSize();
   const labelHeight = labelLineHeight + labelPaddingY * 2;
   const labelWidth = doc.getTextWidth(labelText) + labelPaddingX * 2;
-  const labelX = headerX + doc.getTextWidth("TAX INVOICE") + 12;
+  const labelX = headerX + doc.getTextWidth("TAX INVOICE") + 35;
   const labelY = headerY - labelLineHeight - labelPaddingY;
   doc.setDrawColor(148, 163, 184);
   doc.setFillColor(248, 250, 252);
