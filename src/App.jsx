@@ -666,6 +666,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const pageHeight = doc.internal.pageSize.getHeight();
   const resolvedBrand = brand || BRAND_LOOKUP[DEFAULT_BRAND_KEY];
   const fonts = mergeFontStyles(resolvedBrand.fonts);
+  doc.setFont("helvetica","bold"); doc.setFontSize(14); doc.text("TAX INVOICE", pageWidth/2, 30, { align: "center" });
   doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.text(resolvedBrand.name, 40, 40);
   doc.setDrawColor(148,163,184);
   doc.setLineWidth(0.75);
