@@ -477,12 +477,14 @@ function normalizeDraft(input = {}){
   const prefsSource = input.pdfColumnPrefs ?? input.pdf_column_prefs;
   const pdfColumnPrefs =
     prefsSource && typeof prefsSource === "object" ? { ...prefsSource } : {};
+  const invoiceDiscount = asNumber(input.invoice_discount ?? input.invoiceDiscount ?? 0, 0);
   return {
     id: input.id ?? input.uid ?? randomId("draft"),
     label: (input.label ?? input.name ?? "Draft").toString().trim() || "Draft",
     meta,
     lines,
     pdfColumnPrefs,
+    invoiceDiscount,
     createdAt,
     updatedAt,
   };
@@ -543,6 +545,7 @@ function fromSupabaseDraft(row){
     meta: row?.meta,
     lines: row?.lines,
     pdfColumnPrefs: row?.pdf_column_prefs ?? row?.pdfColumnPrefs,
+    invoice_discount: row?.invoice_discount ?? row?.invoiceDiscount,
     createdAt: row?.created_at,
     updatedAt: row?.updated_at,
   });
@@ -556,6 +559,7 @@ function toSupabaseDraft(draft){
     meta: normalized.meta,
     lines: normalized.lines,
     pdf_column_prefs: normalized.pdfColumnPrefs,
+    invoice_discount: normalized.invoiceDiscount,
     created_at: normalized.createdAt,
     updated_at: normalized.updatedAt || new Date().toISOString(),
   };
@@ -657,6 +661,24 @@ function computeLine({ qty = 1, mrp = 0, rate, discountPct = 0, taxPct = 0 }) {
   const taxAmt = taxable * (asNumber(taxPct)/100);
   const net = taxable + taxAmt;
   return { appliedRate, amount, discountAmt, taxable, taxAmt, net };
+}
+
+function computeInvoiceTotals(lines, invoiceDiscountValue = 0){
+  const baseTotals = (Array.isArray(lines)?lines:[]).reduce((a,it)=>{
+    const r=computeLine(it);
+    a.amount+=r.amount;
+    a.discount+=r.discountAmt;
+    a.taxable+=r.taxable;
+    a.tax+=r.taxAmt;
+    a.net+=r.net;
+    a.qty+=asNumber(it.qty||0,0);
+    return a;
+  },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 });
+  const requestedDiscount = Math.max(0, asNumber(invoiceDiscountValue, 0));
+  const invoiceDiscount = Math.min(requestedDiscount, baseTotals.net);
+  const netBeforeDiscount = baseTotals.net;
+  const net = netBeforeDiscount - invoiceDiscount;
+  return { ...baseTotals, netBeforeDiscount, invoiceDiscount, net };
 }
 function parseCsv(file) { return new Promise((resolve, reject) => Papa.parse(file, { header:true, skipEmptyLines:true, dynamicTyping:true, complete: r=>resolve(r.data), error: reject })); }
 
@@ -783,6 +805,9 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   const includeDiscount = prefs.discount ?? (totals.discount > 0.0001 || invoiceItems.some(it=>asNumber(it.discountPct||0)));
   const includeTax = prefs.tax ?? true;
   const includeAmount = prefs.amount ?? true;
+  const grossTotal = totals.netBeforeDiscount ?? totals.net ?? 0;
+  const invoiceDiscount = Math.max(0, asNumber(totals.invoiceDiscount ?? 0, 0));
+  const finalNet = Math.max(0, grossTotal - invoiceDiscount);
   const head = [["#","Title / Description","Qty","Rate",...(includeDiscount?["Disc%"]:[]),...(includeTax?["Tax%"]:[]),...(includeAmount?["Amount"]:[]),"Net"]];
   const body = invoiceItems.map((it,i)=>{
     const r=computeLine(it);
@@ -815,7 +840,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   if(includeDiscount){ totalsRow.push({ content:"", styles: totalStyles("right") }); }
   if(includeTax){ totalsRow.push({ content:formatINR(totals.tax), styles: totalStyles("right") }); }
   if(includeAmount){ totalsRow.push({ content:formatINR(totals.taxable), styles: totalStyles("right") }); }
-  totalsRow.push({ content:formatINR(totals.net), styles: totalStyles("right") });
+  totalsRow.push({ content:formatINR(grossTotal), styles: totalStyles("right") });
   if(body.length){
     body.push(totalsRow);
   }
@@ -838,7 +863,7 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
   });
 
   const y1 = doc.lastAutoTable?.finalY || startY+100;
-  const amountInWords = numberToIndianCurrencyWords(totals.net);
+  const amountInWords = numberToIndianCurrencyWords(finalNet);
   const summaryEntries=[
     {
       label:"Total Quantity",
@@ -865,8 +890,24 @@ function renderInvoicePdf({ meta, items, totals, brand, columnOptions }) {
       fontSpec:fonts.summaryValue
     },
     {
+      label:"Gross Total",
+      value:formatINR(grossTotal),
+      align:"right",
+      fill:[241,245,249],
+      valueColor:[15,23,42],
+      fontSpec:fonts.summaryValue
+    },
+    ...(invoiceDiscount>0.0001?[{
+      label:"Bill Discount",
+      value:`- ${formatINR(invoiceDiscount)}`,
+      align:"right",
+      fill:[254,242,242],
+      valueColor:[185,28,28],
+      fontSpec:fonts.summaryValue
+    }]:[]),
+    {
       label:"Total Amount",
-      value:formatINR(totals.net),
+      value:formatINR(finalNet),
       align:"right",
       fill:[224,242,254],
       valueColor:[14,165,233],
@@ -980,6 +1021,7 @@ export default function App(){
   const [customers,setCustomers]=usePersistentState("data.customers", []);
   const [batchItems,setBatchItems]=usePersistentState("data.batchItems", []);
   const [lines,setLines]=usePersistentState("data.lines", []);
+  const [invoiceDiscount,setInvoiceDiscount]=usePersistentState("data.invoiceDiscount", 0);
   const [editingLineIndex,setEditingLineIndex] = useState(null);
   const [savedInvoices,setSavedInvoices]=usePersistentState("data.savedInvoices", []);
   const [defaultTaxPct,setDefaultTaxPct]=usePersistentState("settings.defaultTaxPct", 0);
@@ -1336,7 +1378,7 @@ export default function App(){
     });
   }
 
-  const totals = useMemo(()=>lines.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; a.qty+=asNumber(it.qty||0,0); return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 }),[lines]);
+  const totals = useMemo(()=>computeInvoiceTotals(lines, invoiceDiscount),[lines,invoiceDiscount]);
   const amountInWords = useMemo(()=>numberToIndianCurrencyWords(totals.net),[totals.net]);
   const autoDiscountColumn = useMemo(()=>totals.discount > 0.0001 || lines.some(it=>asNumber(it.discountPct||0)),[totals.discount,lines]);
   const pdfColumns = useMemo(()=>{
@@ -1583,6 +1625,7 @@ export default function App(){
     setDraftLabel("");
     setEditingLineIndex(null);
     setInvoiceCatalogQuery("");
+    setInvoiceDiscount(0);
     setTab("invoice");
   }
 
@@ -1606,6 +1649,7 @@ export default function App(){
         meta:metaCopy,
         lines:linesCopy,
         pdfColumnPrefs:pdfPrefsCopy,
+        invoice_discount:invoiceDiscount,
         createdAt,
         updatedAt:timestamp
       });
@@ -1629,6 +1673,7 @@ export default function App(){
     setEditingLineIndex(null);
     setPdfColumnPrefs(draft.pdfColumnPrefs||{});
     setSelectedCustomer(draft.meta ? normalizeCustomer(draft.meta) : null);
+    setInvoiceDiscount(asNumber(draft.invoiceDiscount ?? draft.invoice_discount ?? 0,0));
     if(draft?.meta?.brandKey){
       setSelectedBrandKey(normalizeBrandKey(draft.meta.brandKey));
     }
@@ -1676,7 +1721,7 @@ export default function App(){
         });
       const baseItems = perItems.length ? perItems : lines.map(item=>({ ...item }));
       const used = baseItems.map(item=>({ ...item, taxPct:0 }));
-      const totals=used.reduce((a,it)=>{ const r=computeLine(it); a.amount+=r.amount; a.discount+=r.discountAmt; a.taxable+=r.taxable; a.tax+=r.taxAmt; a.net+=r.net; a.qty+=asNumber(it.qty||0,0); return a; },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 });
+      const totals=computeInvoiceTotals(used, invoiceDiscount);
       const orderedUsed=prepareLinesForExport(used);
       const meta = { ...cust, brandKey: selectedBrandKey };
       const doc=renderInvoicePdf({ meta, items:orderedUsed, totals, columnOptions:pdfColumnPrefs, brand:selectedBrand });
@@ -2097,7 +2142,7 @@ export default function App(){
                     <td style={{textAlign:'center', fontWeight:700}}>{formatQuantity(totals.qty)}</td>
                     <td colSpan="4"></td>
                     <td style={{textAlign:'right'}}>{formatINR(totals.amount)}</td>
-                    <td style={{textAlign:'center', color:'#0ea5e9', fontWeight:700}}>{formatINR(totals.net)}</td>
+                    <td style={{textAlign:'center', color:'#0ea5e9', fontWeight:700}}>{formatINR(totals.netBeforeDiscount ?? totals.net)}</td>
                     <td></td>
                   </tr>
                 </tfoot>
@@ -2123,9 +2168,44 @@ export default function App(){
                   <span className="totals-panel__label">Total Tax</span>
                   <span className="totals-panel__value">{formatINR(totals.tax)}</span>
                 </div>
+                <div className="totals-panel__item">
+                  <span className="totals-panel__label">Gross Total</span>
+                  <span className="totals-panel__value">{formatINR(totals.netBeforeDiscount ?? totals.net)}</span>
+                </div>
+                <div className="totals-panel__item">
+                  <span className="totals-panel__label">Bill Discount</span>
+                  <span className="totals-panel__value" style={{color:'#b91c1c'}}>-{formatINR(totals.invoiceDiscount)}</span>
+                </div>
                 <div className="totals-panel__item totals-panel__highlight">
                   <span className="totals-panel__label">Grand Total</span>
                   <span className="totals-panel__value">{formatINR(totals.net)}</span>
+                </div>
+              </div>
+              <div style={{padding:'16px 20px', display:'flex', flexWrap:'wrap', gap:12, alignItems:'flex-end', background:'rgba(255,255,255,0.9)'}}>
+                <div style={{flex:'1 1 220px', minWidth:220}}>
+                  <label>Discount on total bill (Rs)</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min="0"
+                    value={invoiceDiscount}
+                    onChange={(e)=>setInvoiceDiscount(Math.max(0, asNumber(e.target.value,0)))}
+                    placeholder="0"
+                    style={{textAlign:'right'}}
+                  />
+                  <div style={{marginTop:6, fontSize:12, color:'#475569'}}>
+                    Applied after tax on the overall invoice total.
+                  </div>
+                </div>
+                <div style={{display:'flex', gap:8, alignItems:'center'}}>
+                  <button
+                    className="btn gray"
+                    type="button"
+                    onClick={()=>setInvoiceDiscount(0)}
+                    disabled={!invoiceDiscount}
+                  >
+                    Clear discount
+                  </button>
                 </div>
               </div>
               <div className="totals-panel__words">
