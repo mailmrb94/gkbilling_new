@@ -477,7 +477,7 @@ function normalizeDraft(input = {}){
   const prefsSource = input.pdfColumnPrefs ?? input.pdf_column_prefs;
   const pdfColumnPrefs =
     prefsSource && typeof prefsSource === "object" ? { ...prefsSource } : {};
-  const invoiceDiscount = asNumber(input.invoice_discount ?? input.invoiceDiscount ?? 0, 0);
+  const invoiceDiscount = Math.min(100, Math.max(0, asNumber(input.invoice_discount ?? input.invoiceDiscount ?? 0, 0)));
   return {
     id: input.id ?? input.uid ?? randomId("draft"),
     label: (input.label ?? input.name ?? "Draft").toString().trim() || "Draft",
@@ -663,7 +663,7 @@ function computeLine({ qty = 1, mrp = 0, rate, discountPct = 0, taxPct = 0 }) {
   return { appliedRate, amount, discountAmt, taxable, taxAmt, net };
 }
 
-function computeInvoiceTotals(lines, invoiceDiscountValue = 0){
+function computeInvoiceTotals(lines, invoiceDiscountPercent = 0){
   const baseTotals = (Array.isArray(lines)?lines:[]).reduce((a,it)=>{
     const r=computeLine(it);
     a.amount+=r.amount;
@@ -674,11 +674,12 @@ function computeInvoiceTotals(lines, invoiceDiscountValue = 0){
     a.qty+=asNumber(it.qty||0,0);
     return a;
   },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 });
-  const requestedDiscount = Math.max(0, asNumber(invoiceDiscountValue, 0));
-  const invoiceDiscount = Math.min(requestedDiscount, baseTotals.net);
+  const requestedPercent = Math.max(0, asNumber(invoiceDiscountPercent, 0));
+  const invoiceDiscountPct = Math.min(100, requestedPercent);
   const netBeforeDiscount = baseTotals.net;
+  const invoiceDiscount = netBeforeDiscount * (invoiceDiscountPct / 100);
   const net = netBeforeDiscount - invoiceDiscount;
-  return { ...baseTotals, netBeforeDiscount, invoiceDiscount, net };
+  return { ...baseTotals, netBeforeDiscount, invoiceDiscountPct, invoiceDiscount, net };
 }
 function parseCsv(file) { return new Promise((resolve, reject) => Papa.parse(file, { header:true, skipEmptyLines:true, dynamicTyping:true, complete: r=>resolve(r.data), error: reject })); }
 
@@ -1676,7 +1677,7 @@ export default function App(){
     setEditingLineIndex(null);
     setPdfColumnPrefs(draft.pdfColumnPrefs||{});
     setSelectedCustomer(draft.meta ? normalizeCustomer(draft.meta) : null);
-    setInvoiceDiscount(asNumber(draft.invoiceDiscount ?? draft.invoice_discount ?? 0,0));
+    setInvoiceDiscount(Math.min(100, Math.max(0, asNumber(draft.invoiceDiscount ?? draft.invoice_discount ?? 0,0))));
     if(draft?.meta?.brandKey){
       setSelectedBrandKey(normalizeBrandKey(draft.meta.brandKey));
     }
@@ -2186,18 +2187,19 @@ export default function App(){
               </div>
               <div style={{padding:'16px 20px', display:'flex', flexWrap:'wrap', gap:12, alignItems:'flex-end', background:'rgba(255,255,255,0.9)'}}>
                 <div style={{flex:'1 1 220px', minWidth:220}}>
-                  <label>Discount on total bill (Rs)</label>
+                  <label>Discount on total bill (%)</label>
                   <input
                     className="input"
                     type="number"
                     min="0"
+                    max="100"
                     value={invoiceDiscount}
-                    onChange={(e)=>setInvoiceDiscount(Math.max(0, asNumber(e.target.value,0)))}
+                    onChange={(e)=>setInvoiceDiscount(Math.min(100, Math.max(0, asNumber(e.target.value,0))))}
                     placeholder="0"
                     style={{textAlign:'right'}}
                   />
                   <div style={{marginTop:6, fontSize:12, color:'#475569'}}>
-                    Applied after tax on the overall invoice total.
+                    Applied after tax on the overall invoice total as a percentage.
                   </div>
                 </div>
                 <div style={{display:'flex', gap:8, alignItems:'center'}}>
