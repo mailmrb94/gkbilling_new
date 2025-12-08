@@ -677,8 +677,10 @@ function computeInvoiceTotals(lines, invoiceDiscountPercent = 0){
   const requestedPercent = Math.max(0, asNumber(invoiceDiscountPercent, 0));
   const invoiceDiscountPct = Math.min(100, requestedPercent);
   const netBeforeDiscount = baseTotals.net;
-  const invoiceDiscount = netBeforeDiscount * (invoiceDiscountPct / 100);
-  const net = netBeforeDiscount - invoiceDiscount;
+  const invoiceDiscountRaw = netBeforeDiscount * (invoiceDiscountPct / 100);
+  const invoiceDiscount = Math.round(invoiceDiscountRaw);
+  const netAfterDiscount = netBeforeDiscount - invoiceDiscount;
+  const net = Math.round(netAfterDiscount);
   return { ...baseTotals, netBeforeDiscount, invoiceDiscountPct, invoiceDiscount, net };
 }
 function parseCsv(file) { return new Promise((resolve, reject) => Papa.parse(file, { header:true, skipEmptyLines:true, dynamicTyping:true, complete: r=>resolve(r.data), error: reject })); }
