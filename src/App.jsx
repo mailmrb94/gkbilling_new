@@ -150,6 +150,7 @@ const BRAND_LOOKUP = BRAND_OPTIONS.reduce((acc, option) => {
 }, {});
 
 const DEFAULT_BRAND_KEY = BRAND_OPTIONS[0].id;
+const DEFAULT_INVOICE_DISCOUNT_RATE = 2;
 
 const DEFAULT_BRAND_FONTS = Object.freeze({
   heading: { family: "helvetica", style: "bold", size: 16 },
@@ -477,7 +478,10 @@ function normalizeDraft(input = {}){
   const prefsSource = input.pdfColumnPrefs ?? input.pdf_column_prefs;
   const pdfColumnPrefs =
     prefsSource && typeof prefsSource === "object" ? { ...prefsSource } : {};
-  const invoiceDiscount = asNumber(input.invoice_discount ?? input.invoiceDiscount ?? 0, 0);
+  const invoiceDiscount = asNumber(
+    input.invoice_discount ?? input.invoiceDiscount ?? DEFAULT_INVOICE_DISCOUNT_RATE,
+    DEFAULT_INVOICE_DISCOUNT_RATE
+  );
   return {
     id: input.id ?? input.uid ?? randomId("draft"),
     label: (input.label ?? input.name ?? "Draft").toString().trim() || "Draft",
@@ -663,7 +667,7 @@ function computeLine({ qty = 1, mrp = 0, rate, discountPct = 0, taxPct = 0 }) {
   return { appliedRate, amount, discountAmt, taxable, taxAmt, net };
 }
 
-function computeInvoiceTotals(lines, invoiceDiscountValue = 0){
+function computeInvoiceTotals(lines, invoiceDiscountRate = 0){
   const baseTotals = (Array.isArray(lines)?lines:[]).reduce((a,it)=>{
     const r=computeLine(it);
     a.amount+=r.amount;
@@ -674,11 +678,11 @@ function computeInvoiceTotals(lines, invoiceDiscountValue = 0){
     a.qty+=asNumber(it.qty||0,0);
     return a;
   },{ amount:0, discount:0, taxable:0, tax:0, net:0, qty:0 });
-  const requestedDiscount = Math.max(0, asNumber(invoiceDiscountValue, 0));
-  const invoiceDiscount = Math.min(requestedDiscount, baseTotals.net);
+  const requestedRate = Math.max(0, asNumber(invoiceDiscountRate, 0));
+  const invoiceDiscount = Math.min(baseTotals.net, baseTotals.net * (requestedRate / 100));
   const netBeforeDiscount = baseTotals.net;
   const net = netBeforeDiscount - invoiceDiscount;
-  return { ...baseTotals, netBeforeDiscount, invoiceDiscount, net };
+  return { ...baseTotals, netBeforeDiscount, invoiceDiscount, net, invoiceDiscountRate: requestedRate };
 }
 function parseCsv(file) { return new Promise((resolve, reject) => Papa.parse(file, { header:true, skipEmptyLines:true, dynamicTyping:true, complete: r=>resolve(r.data), error: reject })); }
 
@@ -1024,7 +1028,10 @@ export default function App(){
   const [customers,setCustomers]=usePersistentState("data.customers", []);
   const [batchItems,setBatchItems]=usePersistentState("data.batchItems", []);
   const [lines,setLines]=usePersistentState("data.lines", []);
-  const [invoiceDiscount,setInvoiceDiscount]=usePersistentState("data.invoiceDiscount", 0);
+  const [invoiceDiscount,setInvoiceDiscount]=usePersistentState(
+    "data.invoiceDiscount",
+    () => DEFAULT_INVOICE_DISCOUNT_RATE
+  );
   const [editingLineIndex,setEditingLineIndex] = useState(null);
   const [savedInvoices,setSavedInvoices]=usePersistentState("data.savedInvoices", []);
   const [defaultTaxPct,setDefaultTaxPct]=usePersistentState("settings.defaultTaxPct", 0);
@@ -1628,7 +1635,7 @@ export default function App(){
     setDraftLabel("");
     setEditingLineIndex(null);
     setInvoiceCatalogQuery("");
-    setInvoiceDiscount(0);
+    setInvoiceDiscount(DEFAULT_INVOICE_DISCOUNT_RATE);
     setTab("invoice");
   }
 
@@ -1676,7 +1683,12 @@ export default function App(){
     setEditingLineIndex(null);
     setPdfColumnPrefs(draft.pdfColumnPrefs||{});
     setSelectedCustomer(draft.meta ? normalizeCustomer(draft.meta) : null);
-    setInvoiceDiscount(asNumber(draft.invoiceDiscount ?? draft.invoice_discount ?? 0,0));
+    setInvoiceDiscount(
+      asNumber(
+        draft.invoiceDiscount ?? draft.invoice_discount ?? DEFAULT_INVOICE_DISCOUNT_RATE,
+        DEFAULT_INVOICE_DISCOUNT_RATE
+      )
+    );
     if(draft?.meta?.brandKey){
       setSelectedBrandKey(normalizeBrandKey(draft.meta.brandKey));
     }
@@ -2186,28 +2198,28 @@ export default function App(){
               </div>
               <div style={{padding:'16px 20px', display:'flex', flexWrap:'wrap', gap:12, alignItems:'flex-end', background:'rgba(255,255,255,0.9)'}}>
                 <div style={{flex:'1 1 220px', minWidth:220}}>
-                  <label>Discount on total bill (Rs)</label>
+                  <label>Discount on total bill (%)</label>
                   <input
                     className="input"
                     type="number"
                     min="0"
                     value={invoiceDiscount}
                     onChange={(e)=>setInvoiceDiscount(Math.max(0, asNumber(e.target.value,0)))}
-                    placeholder="0"
+                    placeholder={DEFAULT_INVOICE_DISCOUNT_RATE}
                     style={{textAlign:'right'}}
                   />
                   <div style={{marginTop:6, fontSize:12, color:'#475569'}}>
-                    Applied after tax on the overall invoice total.
+                    Applied after tax on the overall invoice total. Default {DEFAULT_INVOICE_DISCOUNT_RATE}%.
                   </div>
                 </div>
                 <div style={{display:'flex', gap:8, alignItems:'center'}}>
                   <button
                     className="btn gray"
                     type="button"
-                    onClick={()=>setInvoiceDiscount(0)}
-                    disabled={!invoiceDiscount}
+                    onClick={()=>setInvoiceDiscount(DEFAULT_INVOICE_DISCOUNT_RATE)}
+                    disabled={invoiceDiscount === DEFAULT_INVOICE_DISCOUNT_RATE}
                   >
-                    Clear discount
+                    Reset to default
                   </button>
                 </div>
               </div>
